@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"nexserver/models"
+	"nexus_server/models"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"

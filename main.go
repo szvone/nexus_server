@@ -5,16 +5,19 @@ import (
 	"context"
 	"crypto/ed25519"
 	crand "crypto/rand"
+	"embed"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
-	"nexserver/database"
-	"nexserver/gen"
-	"nexserver/handlers"
-	"nexserver/models"
-	"nexserver/nodes"
+	"net/http"
+	"nexus_server/database"
+	"nexus_server/gen"
+	"nexus_server/handlers"
+	"nexus_server/models"
+	"nexus_server/nodes"
 	"os"
 	"os/signal"
 	"strconv"
@@ -29,6 +32,12 @@ import (
 
 	"google.golang.org/protobuf/proto"
 )
+
+//go:embed templates/*
+var htmlFS embed.FS
+
+//go:embed static/*
+var assetFS embed.FS
 
 var db *database.Database
 
@@ -268,8 +277,16 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 		Output: nil, // 禁用日志输出
 	}))
 	// 加载模板
-	router.LoadHTMLGlob("./templates/*")
-	router.Static("/static", "./static")
+
+	router.SetHTMLTemplate(template.Must(template.New("").ParseFS(htmlFS, "templates/*")))
+	// 推荐：引入js css等  例如j.js  访问地址为 localhost:8080/asset/j.js
+	router.Any("/static/*filepath", func(c *gin.Context) {
+		staticServer := http.FileServer(http.FS(assetFS))
+		staticServer.ServeHTTP(c.Writer, c.Request)
+	})
+
+	// router.LoadHTMLGlob("./templates/*")
+	// router.Static("/static", "./static")
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(200, "index.html", nil)
 	})

@@ -1,7 +1,7 @@
 package nodes
 
 import (
-	"nexserver/gen"
+	"nexus_server/gen"
 	"sync"
 	"sync/atomic"
 )

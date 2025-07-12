@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"nexserver/database"
-	"nexserver/models"
+	"nexus_server/database"
+	"nexus_server/models"
 
 	"github.com/gin-gonic/gin"
 )
