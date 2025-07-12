@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus分布式计算节点 - 监控面板</title>
+    <script src="/static/tailwindcss.js"></script>
+    <link href="/static/fontawesome/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        warning: '#F59E0B',
+                        danger: '#EF4444',
+                        info: '#6366F1',
+                        dark: '#1E293B',
+                        light: '#F8FAFC'
+                    },
+                    fontFamily: {
+                        inter: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                    boxShadow: {
+                        'card': '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+                        'card-hover': '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                    }
+                },
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .text-shadow {
+                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .transition-all-300 {
+                transition: all 0.3s ease;
+            }
+            .bg-gradient-blue {
+                background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+            }
+            .bg-gradient-green {
+                background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            }
+            .bg-gradient-orange {
+                background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+            }
+            .bg-gradient-red {
+                background: linear-gradient(135deg, #EF4444 0%, #DC2626 100%);
+            }
+            .bg-gradient-purple {
+                background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%);
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50 font-inter min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-7xl">
+        <!-- 页面标题 -->
+        <header class="mb-10 text-center">
+            <h1 class="text-[clamp(2rem,5vw,3rem)] font-bold text-dark mb-2 text-shadow">
+                <i class="fa fa-tasks text-primary mr-3"></i>Nexus分布式计算节点监控面板
+            </h1>
+                 <div id="last-updated" class="text-sm text-gray-500 mt-2">by : vone</div>
+        </header>
+           <!-- 按钮区域 -->
+        <div class="flex flex-wrap justify-center gap-4 mb-10" >
+            <button id="reset-params-btn"
+                class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
+                Twitter
+            </button>
+            <button id="clear-db-btn"
+                class="bg-secondary hover:bg-secondary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
+                Github
+            </button>
+        </div>
+
+
+        <!-- 状态卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-primary">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">处理中任务</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="processed-tasks">0</h3>
+                    </div>
+                    <div class="bg-primary/10 p-3 rounded-full">
+                        <i class="fa fa-check-circle text-primary text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span id="processed-percentage" class="text-secondary font-medium">0</span>
+                    <span class="text-gray-500 ml-1">已完成</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-warning">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">待处理任务</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="pending-tasks">0</h3>
+                    </div>
+                    <div class="bg-warning/10 p-3 rounded-full">
+                        <i class="fa fa-clock-o text-warning text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <div class="w-full bg-gray-200 rounded-full h-2 mr-2">
+                        <div id="pending-progress" class="bg-warning h-2 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <span id="pending-percentage" class="text-warning font-medium">0%</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-secondary">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">任务总数</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="total-tasks">0</h3>
+                    </div>
+                    <div class="bg-secondary/10 p-3 rounded-full">
+                        <i class="fa fa-list-alt text-secondary text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span class="text-gray-500">累计任务数</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-info">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">处理速度</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="processing-speed">0</h3>
+                    </div>
+                    <div class="bg-info/10 p-3 rounded-full">
+                        <i class="fa fa-tachometer text-info text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span class="text-info font-medium">任务/分钟</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二行卡片 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-secondary">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">成功任务</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="success-tasks">0</h3>
+                    </div>
+                    <div class="bg-secondary/10 p-3 rounded-full">
+                        <i class="fa fa-check text-secondary text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span id="success-percentage" class="text-secondary font-medium">0%</span>
+                    <span class="text-gray-500 ml-1">成功率</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-danger">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">失败任务</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="failed-tasks">0</h3>
+                    </div>
+                    <div class="bg-danger/10 p-3 rounded-full">
+                        <i class="fa fa-times text-danger text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span id="failed-percentage" class="text-danger font-medium">0%</span>
+                    <span class="text-gray-500 ml-1">失败率</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-primary">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">平均耗时</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="avg-processing-time">0</h3>
+                    </div>
+                    <div class="bg-primary/10 p-3 rounded-full">
+                        <i class="fa fa-clock-o text-primary text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span class="text-primary font-medium">秒/任务</span>
+                </div>
+            </div>
+
+            <div
+                class="bg-white rounded-xl shadow-card p-6 transition-all-300 hover:shadow-card-hover transform hover:-translate-y-1 border-l-4 border-info">
+                <div class="flex justify-between items-start mb-4">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500">API状态</p>
+                        <h3 class="text-3xl font-bold text-dark mt-1" id="api-status">--</h3>
+                    </div>
+                    <div class="bg-info/10 p-3 rounded-full">
+                        <i class="fa fa-server text-info text-xl"></i>
+                    </div>
+                </div>
+                <div class="flex items-center text-sm">
+                    <span id="api-status-text" class="text-gray-500">等待数据...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="bg-white rounded-xl shadow-card p-6 mb-10">
+            <h2 class="text-xl font-bold text-dark mb-6 flex items-center">
+                <i class="fa fa-line-chart text-primary mr-2"></i>任务处理趋势
+            </h2>
+            <div class="h-80">
+                <canvas id="taskChart"></canvas>
+            </div>
+        </div>
+
+     
+        <!-- 重置服务器参数模态框 -->
+        <div id="reset-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 transform transition-all-300 scale-95 opacity-0"
+                id="modal-content">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-bold text-dark">重置服务器参数</h3>
+                    <button id="close-modal" class="text-gray-400 hover:text-gray-600 transition-colors">
+                        <i class="fa fa-times text-xl"></i>
+                    </button>
+                </div>
+                <form id="reset-form" class="space-y-4">
+                    <div>
+                        <label for="work-address" class="block text-sm font-medium text-gray-700 mb-1">程序工作地址</label>
+                        <input type="text" id="work-address"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                            placeholder="内网写内网IP，公网写公网IP，本机写127.0.0.1">
+                    </div>
+                    <div>
+                        <label for="work-port" class="block text-sm font-medium text-gray-700 mb-1">程序工作端口</label>
+                        <input type="number" id="work-port"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                            placeholder="输入端口号（8000-9999）" min="8000" max="9999">
+                    </div>
+                    <div>
+                        <label for="thread-count" class="block text-sm font-medium text-gray-700 mb-1">任务读取线程</label>
+                        <input type="number" id="thread-count"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                            placeholder="多开计算程序数" min="1">
+                    </div>
+                    <div>
+                        <label for="queue-size" class="block text-sm font-medium text-gray-700 mb-1">任务队列长度</label>
+                        <input type="number" id="queue-size"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                            placeholder="多开计算程序数 x 3" min="1">
+                    </div>
+                    <div class="flex justify-end gap-3 mt-6">
+                        <button type="button" id="cancel-reset"
+                            class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">取消</button>
+                        <button type="submit"
+                            class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">确认</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 清空数据库确认模态框 -->
+        <div id="clear-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 transform transition-all-300 scale-95 opacity-0"
+                id="clear-modal-content">
+                <div class="text-center mb-6">
+                    <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-danger/10 mb-4">
+                        <i class="fa fa-exclamation-triangle text-danger text-2xl"></i>
+                    </div>
+                    <h3 class="text-xl font-bold text-dark">清空任务数据库</h3>
+                    <p class="text-gray-600 mt-2">此操作将删除所有任务数据，包括已处理和待处理的任务。此操作不可撤销。</p>
+                </div>
+                <div class="flex justify-center gap-3">
+                    <button id="cancel-clear"
+                        class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">取消</button>
+                    <button id="confirm-clear"
+                        class="px-6 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 transition-colors">确认清空</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作结果提示 -->
+        <div id="toast"
+            class="fixed bottom-6 right-6 bg-dark text-white px-6 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center z-50">
+            <i id="toast-icon" class="fa fa-check-circle mr-2"></i>
+            <span id="toast-message">操作成功</span>
+        </div>
+    </div>
+
+    <script src="/static/chart.umd.min.js"></script>
+    <script>
+        // 任务数据图表
+        let taskChart;
+        const taskData = {
+            labels: Array(30).fill(''),
+            datasets: [{
+                label: '处理速度（任务/分钟）',
+                data: Array(30).fill(0),
+                borderColor: '#3B82F6',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                tension: 0.4,
+                fill: true
+            }, {
+                label: '平均耗时（秒/任务）',
+                data: Array(30).fill(0),
+                borderColor: '#F59E0B',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        };
+
+        // 初始化图表
+        function initChart() {
+            const ctx = document.getElementById('taskChart').getContext('2d');
+            taskChart = new Chart(ctx, {
+                type: 'line',
+                data: taskData,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                display: false
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            }
+                        }
+                    },
+                    interaction: {
+                        mode: 'nearest',
+                        axis: 'x',
+                        intersect: false
+                    },
+                    animation: {
+                        duration: 500
+                    }
+                }
+            });
+        }
+
+        // 更新图表数据
+        function updateChart(processed, pending) {
+            taskData.datasets[0].data.shift();
+            taskData.datasets[0].data.push(processed);
+            taskData.datasets[1].data.shift();
+            taskData.datasets[1].data.push(pending);
+            taskChart.update();
+        }
+
+        // 显示提示消息
+        function showToast(message, isSuccess = true) {
+            const toast = document.getElementById('toast');
+            const toastIcon = document.getElementById('toast-icon');
+            const toastMessage = document.getElementById('toast-message');
+
+            toastMessage.textContent = message;
+            toast.className = 'fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg transform translate-y-0 opacity-1 transition-all duration-300 flex items-center z-50';
+
+            if (isSuccess) {
+                toast.classList.add('bg-secondary');
+                toast.classList.remove('bg-danger');
+                toastIcon.className = 'fa fa-check-circle mr-2';
+            } else {
+                toast.classList.add('bg-danger');
+                toast.classList.remove('bg-secondary');
+                toastIcon.className = 'fa fa-exclamation-circle mr-2';
+            }
+
+            setTimeout(() => {
+                toast.className = 'fixed bottom-6 right-6 px-6 py-3 rounded-lg shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center z-50';
+            }, 3000);
+        }
+
+        // 显示模态框
+        function showModal(modalId, contentId) {
+            const modal = document.getElementById(modalId);
+            const content = document.getElementById(contentId);
+
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                content.classList.remove('scale-95', 'opacity-0');
+                content.classList.add('scale-100', 'opacity-100');
+            }, 10);
+        }
+
+        // 隐藏模态框
+        function hideModal(modalId, contentId) {
+            const modal = document.getElementById(modalId);
+            const content = document.getElementById(contentId);
+
+            content.classList.remove('scale-100', 'opacity-100');
+            content.classList.add('scale-95', 'opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        // 从API获取数据
+        async function fetchData() {
+            try {
+                // 模拟API请求
+                const response = await fetch('/tasks/getTaskStats');
+
+                // 实际使用时请替换为你的API地址
+                // const response = await fetch('/api/task-stats');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误，状态码: ${response.status}`);
+                }
+                let json = await response.json()
+                console.log(json)
+                // 模拟数据
+                const mockData = {
+                    processedTasks: json.processing_tasks,
+                    pendingTasks: json.pending_tasks,
+                    totalTasks: json.total_tasks,
+                    successTasks: json.successful_tasks,
+                    failedTasks: json.failed_tasks,
+                    processingSpeed: (json.processing_rate).toFixed(1),
+                    avgProcessingTime: (json.avg_process_time).toFixed(2)
+                };
+
+
+                // 更新UI
+                updateUI(mockData);
+                updateChart((json.processing_rate).toFixed(1),(json.avg_process_time).toFixed(2));
+
+                // 更新最后更新时间
+
+                // 更新API状态
+                document.getElementById('api-status').textContent = '正常';
+                document.getElementById('api-status-text').textContent = `最后更新: ${new Date().toLocaleTimeString()}`;
+
+                // document.getElementById('api-status-text').textContent = '数据获取成功';
+                document.getElementById('api-status-text').className = 'text-secondary font-medium';
+
+                return mockData;
+            } catch (error) {
+                console.error('获取数据失败:', error);
+
+                // 更新API状态
+                document.getElementById('api-status').textContent = '错误';
+                document.getElementById('api-status-text').textContent = '数据获取失败';
+                document.getElementById('api-status-text').className = 'text-danger font-medium';
+
+                return null;
+            }
+        }
+
+        // 更新UI
+        function updateUI(data) {
+            document.getElementById('processed-tasks').textContent = data.processedTasks.toLocaleString();
+            document.getElementById('pending-tasks').textContent = data.pendingTasks.toLocaleString();
+            document.getElementById('total-tasks').textContent = data.totalTasks.toLocaleString();
+            document.getElementById('success-tasks').textContent = data.successTasks.toLocaleString();
+            document.getElementById('failed-tasks').textContent = data.failedTasks.toLocaleString();
+            document.getElementById('processing-speed').textContent = data.processingSpeed;
+            document.getElementById('avg-processing-time').textContent = data.avgProcessingTime;
+
+            // 计算百分比
+            const processedPercentage = data.successTasks + data.failedTasks;
+            const pendingPercentage = data.totalTasks > 0 ? Math.round((data.pendingTasks / data.totalTasks) * 100) : 0;
+            const successPercentage = (data.successTasks + data.failedTasks) > 0 ? Math.round((data.successTasks / (data.successTasks + data.failedTasks)) * 100) : 0;
+            const failedPercentage = (data.successTasks + data.failedTasks) > 0 ? Math.round((data.failedTasks / (data.successTasks + data.failedTasks)) * 100) : 0;
+
+            // 更新百分比显示
+            document.getElementById('processed-percentage').textContent = `${processedPercentage}`;
+            document.getElementById('pending-percentage').textContent = `${pendingPercentage}%`;
+            document.getElementById('pending-progress').style.width = `${pendingPercentage}%`;
+            document.getElementById('success-percentage').textContent = `${successPercentage}%`;
+            document.getElementById('failed-percentage').textContent = `${failedPercentage}%`;
+        }
+
+        // 重置服务器参数
+        async function resetServerParams(formData) {
+            try {
+                // 模拟API请求
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                // 实际使用时请替换为你的API地址
+                // const response = await fetch('/api/reset-params', {
+                //     method: 'POST',
+                //     headers: {
+                //         'Content-Type': 'application/json'
+                //     },
+                //     body: JSON.stringify(formData)
+                // });
+
+                // if (!response.ok) {
+                //     throw new Error(`HTTP错误，状态码: ${response.status}`);
+                // }
+
+                showToast('服务器参数已重置');
+                return true;
+            } catch (error) {
+                console.error('重置参数失败:', error);
+                showToast('重置参数失败', false);
+                return false;
+            }
+        }
+
+        // 清空任务数据库
+        async function clearTaskDatabase() {
+            try {
+                // 模拟API请求
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                // 实际使用时请替换为你的API地址
+                // const response = await fetch('/api/clear-db', {
+                //     method: 'POST'
+                // });
+
+                // if (!response.ok) {
+                //     throw new Error(`HTTP错误，状态码: ${response.status}`);
+                // }
+
+                showToast('任务数据库已清空');
+                // 刷新数据
+                fetchData();
+                return true;
+            } catch (error) {
+                console.error('清空数据库失败:', error);
+                showToast('清空数据库失败', false);
+                return false;
+            }
+        }
+
+        // 初始化事件监听
+        function initEventListeners() {
+            // 重置服务器参数按钮
+            document.getElementById('reset-params-btn').addEventListener('click', () => {
+                showModal('reset-modal', 'modal-content');
+                window.location.href = "https://x.com/Web3_vone"
+            });
+
+            // 关闭重置模态框
+            document.getElementById('close-modal').addEventListener('click', () => {
+                hideModal('reset-modal', 'modal-content');
+            });
+
+            // 取消重置
+            document.getElementById('cancel-reset').addEventListener('click', () => {
+                hideModal('reset-modal', 'modal-content');
+            });
+
+            // 提交重置表单
+            document.getElementById('reset-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                const workAddress = document.getElementById('work-address').value;
+                const threadCount = document.getElementById('thread-count').value;
+                const workPort = document.getElementById('work-port').value;
+                const queueSize = document.getElementById('queue-size').value;
+
+                const formData = {
+                    workAddress,
+                    threadCount,
+                    workPort,
+                    queueSize
+                };
+
+                // 验证表单
+                if (!workAddress || !threadCount || !workPort || !queueSize) {
+                    showToast('请填写所有字段', false);
+                    return;
+                }
+
+                // 提交表单
+                const success = await resetServerParams(formData);
+                if (success) {
+                    hideModal('reset-modal', 'modal-content');
+                    // 清空表单
+                    document.getElementById('reset-form').reset();
+                }
+            });
+
+            // 清空数据库按钮
+            document.getElementById('clear-db-btn').addEventListener('click', () => {
+                // showModal('clear-modal', 'clear-modal-content');
+                window.location.href = "https://github.com/szvone/nexusApp"
+
+            });
+
+            // 取消清空
+            document.getElementById('cancel-clear').addEventListener('click', () => {
+                hideModal('clear-modal', 'clear-modal-content');
+            });
+
+            // 确认清空
+            document.getElementById('confirm-clear').addEventListener('click', async () => {
+                const success = await clearTaskDatabase();
+                if (success) {
+                    hideModal('clear-modal', 'clear-modal-content');
+                }
+            });
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            initEventListeners();
+
+            // 首次加载数据
+            fetchData();
+
+            // 每1秒获取一次数据
+            setInterval(fetchData, 1000);
+        });
+    </script>
+</body>
+
+</html>

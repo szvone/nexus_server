@@ -1,0 +1,188 @@
+package handlers
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"net/http"
+	"nexserver/database"
+	"nexserver/models"
+
+	"github.com/gin-gonic/gin"
+)
+
+type TaskHandler struct {
+	db *database.Database
+}
+
+func NewTaskHandler(db *database.Database) *TaskHandler {
+	return &TaskHandler{db: db}
+}
+
+func (h *TaskHandler) CreateTask(c *gin.Context) {
+	var task models.TaskData
+	if err := c.ShouldBindJSON(&task); err != nil {
+		sendErrorResponse(c, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	if task.TaskID == "" {
+		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
+		return
+	}
+
+	if err := h.db.CreateTask(task); err != nil {
+		handleDBError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, task)
+}
+
+func (h *TaskHandler) GetTask(c *gin.Context) {
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
+		return
+	}
+
+	task, err := h.db.GetTask(taskID)
+	if handleDBError(c, err) {
+		return
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+func (h *TaskHandler) UpdateTask(c *gin.Context) {
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
+		return
+	}
+
+	var task models.TaskData
+	if err := c.ShouldBindJSON(&task); err != nil {
+		sendErrorResponse(c, http.StatusBadRequest, "Invalid JSON: "+err.Error())
+		return
+	}
+
+	if task.TaskID != "" && task.TaskID != taskID {
+		sendErrorResponse(c, http.StatusBadRequest, "Task ID mismatch")
+		return
+	}
+
+	task.TaskID = taskID
+	if err := h.db.UpdateTask(task); handleDBError(c, err) {
+		return
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+func (h *TaskHandler) DeleteTask(c *gin.Context) {
+	taskID := c.Param("task_id")
+	if taskID == "" {
+		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
+		return
+	}
+
+	if err := h.db.DeleteTask(taskID); handleDBError(c, err) {
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+func (h *TaskHandler) ListTasks(c *gin.Context) {
+	tasks, err := h.db.GetAllTasks()
+	if handleDBError(c, err) {
+		return
+	}
+
+	if tasks == nil {
+		tasks = []models.TaskData{}
+	}
+
+	c.JSON(http.StatusOK, tasks)
+}
+
+// 提取一个新任务
+func (h *TaskHandler) PickTask(c *gin.Context) {
+	task, err := h.db.PickAvailableTask()
+	if err != nil {
+		sendErrorResponse(c, http.StatusInternalServerError, "Failed to pick task: "+err.Error())
+		return
+	}
+
+	if task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "No available tasks"})
+		return
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+// 提取一个新任务
+func (h *TaskHandler) GetTaskStats(c *gin.Context) {
+	task, err := h.db.GetTaskStats()
+	if err != nil {
+		sendErrorResponse(c, http.StatusInternalServerError, "Failed to pick task: "+err.Error())
+		return
+	}
+
+	if task == nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "No available tasks"})
+		return
+	}
+
+	c.JSON(http.StatusOK, task)
+}
+
+// 提交任务结果
+func (h *TaskHandler) SubmitResult(c *gin.Context) {
+
+	var submission models.TaskResultSubmission
+	if err := c.ShouldBindJSON(&submission); err != nil {
+		sendErrorResponse(c, http.StatusBadRequest, "Invalid request format: "+err.Error())
+		return
+	}
+
+	if err := h.db.SubmitTaskResult(submission); err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, sql.ErrNoRows) {
+			statusCode = http.StatusNotFound
+		} else if err.Error() == "task is not locked" {
+			statusCode = http.StatusConflict
+		} else if err.Error() == "task lock has expired" {
+			statusCode = http.StatusGone
+		}
+
+		sendErrorResponse(c, statusCode, "Failed to submit result: "+err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Task %s completed successfully", submission.TaskID),
+		"credits": submission.Credits,
+	})
+}
+
+func sendErrorResponse(c *gin.Context, statusCode int, message string) {
+	println(message)
+	c.JSON(statusCode, gin.H{"error": message})
+}
+
+func handleDBError(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, sql.ErrNoRows) {
+		sendErrorResponse(c, http.StatusNotFound, "Task not found")
+		return true
+	}
+
+	sendErrorResponse(c, http.StatusInternalServerError, "Database error: "+err.Error())
+	return true
+}
