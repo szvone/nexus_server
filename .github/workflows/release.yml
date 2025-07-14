@@ -1,0 +1,221 @@
+name: Nexus Client Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如 1.0.0)'
+        required: true
+        default: '1.0.0'
+      skip_tags:
+        description: '跳过标签创建？'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  PROJECT_NAME: nexus_server
+  GO_VERSION: '1.22'
+
+jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version_tag: ${{ steps.set_version.outputs.version_tag }}
+      build_date: ${{ steps.set_date.outputs.build_date }}
+      version_number: ${{ steps.set_version.outputs.version_number }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ !inputs.skip_tags }}
+        
+      - name: Set version
+        id: set_version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -n "${{ github.ref_name }}" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          
+          echo "version_tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "version_number=$VERSION" >> $GITHUB_OUTPUT
+          
+      - name: Set build date
+        id: set_date
+        run: |
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
+          
+      - name: Create tag (if manual)
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.skip_tags }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git tag ${{ steps.set_version.outputs.version_tag }} ${{ github.sha }}
+          git push origin ${{ steps.set_version.outputs.version_tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Build for ${{ matrix.target }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux 目标 (动态链接)
+          - target: linux-gnu
+            goos: linux
+            goarch: amd64
+            os: ubuntu-latest
+            bin_suffix: linux
+            cgo: 1
+            
+          # Linux 目标 (静态链接)
+          - target: linux-musl
+            goos: linux
+            goarch: amd64
+            os: ubuntu-latest
+            bin_suffix: linux-static
+            cgo: 0
+            
+          # Windows 目标
+          - target: windows
+            goos: windows
+            goarch: amd64
+            os: windows-latest
+            bin_suffix: windows.exe
+            cgo: 0
+            
+          # macOS Intel 目标
+          - target: macos-intel
+            goos: darwin
+            goarch: amd64
+            os: macos-latest
+            bin_suffix: macos-intel
+            cgo: 0
+            
+          # macOS ARM 目标
+          - target: macos-arm
+            goos: darwin
+            goarch: arm64
+            os: macos-latest
+            bin_suffix: macos-arm
+            cgo: 0
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          
+      - name: Install build dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+          if [ "${{ matrix.cgo }}" = "1" ]; then
+            sudo apt-get install -y libc6-dev
+          fi
+          
+      - name: Prepare environment
+        run: |
+          # 设置输出文件名
+          BINARY_NAME="${{ env.PROJECT_NAME }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="$BINARY_NAME.exe"
+          fi
+          
+          # 设置目标平台变量
+          echo "GOOS=${{ matrix.goos }}" >> $GITHUB_ENV
+          echo "GOARCH=${{ matrix.goarch }}" >> $GITHUB_ENV
+          echo "CGO_ENABLED=${{ matrix.cgo }}" >> $GITHUB_ENV
+          echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
+          
+      - name: Build Go binary
+        run: |
+          # 设置LDFLAGS包含版本信息
+          LDFLAGS="-s -w -X main.Version=${{ needs.prepare.outputs.version_number }} -X main.BuildDate=${{ needs.prepare.outputs.build_date }}"
+          
+          # 构建二进制文件
+          go build -trimpath -ldflags "$LDFLAGS" -o "$BINARY_NAME" .
+          
+          # 重命名以包含平台信息
+          OUTPUT_NAME="${{ env.PROJECT_NAME }}-${{ matrix.bin_suffix }}"
+          if [ "${{ matrix.goos }}" != "windows" ]; then
+            chmod +x "$BINARY_NAME"
+          fi
+          mv "$BINARY_NAME" "$OUTPUT_NAME"
+        
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}-binary
+          path: ${{ env.PROJECT_NAME }}-${{ matrix.bin_suffix }}  # 只上传二进制文件
+
+  create_release:
+    name: Create GitHub Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*-binary'
+          merge-multiple: true
+          
+      - name: Prepare release assets
+        run: |
+          # 创建统一的发布目录
+          mkdir -p release_assets
+          
+          # 复制所有文件到统一目录
+          find artifacts -type f -exec cp {} release_assets \;
+          
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ needs.prepare.outputs.version_tag }}
+          name: "Nexus Client ${{ needs.prepare.outputs.version_number }}"
+          body: |
+            # Nexus Client ${{ needs.prepare.outputs.version_number }}
+            
+            - Release date: ${{ needs.prepare.outputs.build_date }}
+            - Build commit: ${{ github.sha }}
+            - Built with Go ${{ env.GO_VERSION }}
+            
+            ## Download Assets
+            
+            | Platform        | File                              |
+            |-----------------|-----------------------------------|
+            | Linux           | `nexus_server-linux`              |
+            | Linux(备用)     | `nexus_server-linux-static`       |
+            | Windows         | `nexus_server-windows.exe`        |
+            | macOS(Intel芯片)    | `nexus_server-macos-intel`        |
+            | macOS(M芯片)      | `nexus_server-macos-arm`          |
+            
+          draft: false
+          prerelease: false
+          files: release_assets/*
