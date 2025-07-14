@@ -18,7 +18,7 @@ on:
 
 env:
   PROJECT_NAME: nexus_server
-  GO_VERSION: '1.22'
+  GO_VERSION: '1.24.5'
 
 jobs:
   prepare:

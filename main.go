@@ -41,6 +41,10 @@ var assetFS embed.FS
 
 var db *database.Database
 
+// 定义全局信号量（最大并发数）
+const maxConcurrent = 5 // 最大并发数
+var sem = make(chan struct{}, maxConcurrent)
+
 // 工作协程函数
 func getNodes() bool {
 
@@ -225,6 +229,7 @@ func main() {
 		scanner.Scan()
 		return
 	}
+
 	log.Println("钱包地址：" + config.Address)
 	log.Println("读取节点列表...")
 	if !getNodes() {
@@ -233,6 +238,14 @@ func main() {
 		scanner.Scan()
 		return
 	}
+
+	if config.Worker > len(nodes.GetAllNodes()) {
+		log.Println("节点数量过少，请先添加节点！")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		return
+	}
+
 	// 初始化数据库
 	db, _ = database.NewDatabase()
 
@@ -267,6 +280,22 @@ func main() {
 
 }
 
+// 并发限制中间件
+func concurrencyLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 在超时时间内等待获取信号量（这里使用10秒超时）
+		select {
+		case sem <- struct{}{}: // 获取信号量槽位
+			defer func() { <-sem }() // 请求完成后释放槽位
+			c.Next()                 // 继续处理请求
+		case <-time.After(10 * time.Second): // 等待超时
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "系统繁忙，请稍后再试",
+			})
+			c.Abort()
+		}
+	}
+}
 func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 	gin.DisableConsoleColor()
 	gin.DefaultWriter = io.Discard // 所有日志输出到 io.Discard
@@ -277,6 +306,8 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 		Output: nil, // 禁用日志输出
 	}))
 	// 加载模板
+	// 注册并发限制中间件
+	router.Use(concurrencyLimitMiddleware())
 
 	router.SetHTMLTemplate(template.Must(template.New("").ParseFS(htmlFS, "templates/*")))
 	// 推荐：引入js css等  例如j.js  访问地址为 localhost:8080/asset/j.js
