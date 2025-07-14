@@ -1,4 +1,4 @@
-name: Nexus Client Release
+name: Nexus Server Release
 
 on:
   push:
