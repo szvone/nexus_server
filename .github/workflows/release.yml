@@ -206,9 +206,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: ${{ needs.prepare.outputs.version_tag }}
-          name: "Nexus Client ${{ needs.prepare.outputs.version_number }}"
+          name: "Nexus Server ${{ needs.prepare.outputs.version_number }}"
           body: |
-            # Nexus Client ${{ needs.prepare.outputs.version_number }}
+            # Nexus Server ${{ needs.prepare.outputs.version_number }}
             
             - Release date: ${{ needs.prepare.outputs.build_date }}
             - Build commit: ${{ github.sha }}
