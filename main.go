@@ -243,6 +243,7 @@ func main() {
 	db, err = database.NewDatabase()
 	if err != nil {
 		log.Println("初始化数据库失败！")
+		log.Println("Error:", err)
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 		return
