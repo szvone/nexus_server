@@ -240,8 +240,13 @@ func main() {
 	}
 
 	// 初始化数据库
-	db, _ = database.NewDatabase()
-
+	db, err = database.NewDatabase()
+	if err != nil {
+		log.Println("初始化数据库失败！")
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		return
+	}
 	defer db.Close()
 
 	// 创建上下文用于关闭所有goroutine
