@@ -18,7 +18,7 @@ on:
 
 env:
   PROJECT_NAME: nexus_server
-  GO_VERSION: '1.24.5'
+  GO_VERSION: '1.22'
 
 jobs:
   prepare:
@@ -80,7 +80,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux 目标 (动态链接)
+          # Linux 目标 (启用CGO)
           - target: linux-gnu
             goos: linux
             goarch: amd64
@@ -88,37 +88,29 @@ jobs:
             bin_suffix: linux
             cgo: 1
             
-          # Linux 目标 (静态链接)
-          - target: linux-musl
-            goos: linux
-            goarch: amd64
-            os: ubuntu-latest
-            bin_suffix: linux-static
-            cgo: 0
-            
-          # Windows 目标
+          # Windows 目标 (启用CGO)
           - target: windows
             goos: windows
             goarch: amd64
             os: windows-latest
             bin_suffix: windows.exe
-            cgo: 0
+            cgo: 1
             
-          # macOS Intel 目标
+          # macOS Intel 目标 (启用CGO)
           - target: macos-intel
             goos: darwin
             goarch: amd64
             os: macos-latest
             bin_suffix: macos-intel
-            cgo: 0
+            cgo: 1
             
-          # macOS ARM 目标
+          # macOS ARM 目标 (启用CGO)
           - target: macos-arm
             goos: darwin
             goarch: arm64
             os: macos-latest
             bin_suffix: macos-arm
-            cgo: 0
+            cgo: 1
     
     steps:
       - name: Checkout code
@@ -128,16 +120,16 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          cache: false  # 禁用缓存
           
-      - name: Install build dependencies (Linux)
-        if: ${{ matrix.os == 'ubuntu-latest' }}
+      - name: Install C dependencies
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-          if [ "${{ matrix.cgo }}" = "1" ]; then
-            sudo apt-get install -y libc6-dev
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            sudo apt-get update
+            sudo apt-get install -y build-essential libsqlite3-dev
+          elif [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "Installing SQLite for Windows via PowerShell..."
           fi
           
       - name: Prepare environment
@@ -219,7 +211,6 @@ jobs:
             | Platform        | File                              |
             |-----------------|-----------------------------------|
             | Linux           | `nexus_server-linux`              |
-            | Linux(静态)     | `nexus_server-linux-static`       |
             | Windows         | `nexus_server-windows.exe`        |
             | macOS(Intel)    | `nexus_server-macos-intel`        |
             | macOS(ARM)      | `nexus_server-macos-arm`          |
