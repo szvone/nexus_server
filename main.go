@@ -81,8 +81,8 @@ func getNodes() bool {
 		nodes.StoreNodes(res2)
 	}
 	log.Println("读取到节点节点数量：", len(nodes.GetAllNodes()))
-	if len(nodes.GetAllNodes()) == 0 {
-		log.Println("节点节点数量不足，请创建节点后再运行！")
+	if len(nodes.GetAllNodes()) <= 10 {
+		log.Println("节点节点数量不足10个，请创建节点后再运行！")
 		return false
 	}
 	return true
@@ -234,13 +234,6 @@ func main() {
 	log.Println("读取节点列表...")
 	if !getNodes() {
 		log.Println("读取节点列表失败！")
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		return
-	}
-
-	if config.Worker > len(nodes.GetAllNodes()) {
-		log.Println("节点数量过少，请先添加节点！")
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 		return
