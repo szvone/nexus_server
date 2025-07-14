@@ -40,6 +40,7 @@ jobs:
         
       - name: Set version
         id: set_version
+        shell: bash
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
@@ -54,12 +55,14 @@ jobs:
           
       - name: Set build date
         id: set_date
+        shell: bash
         run: |
           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
           echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
           
       - name: Create tag (if manual)
         if: ${{ github.event_name == 'workflow_dispatch' && !inputs.skip_tags }}
+        shell: bash
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
@@ -128,7 +131,8 @@ jobs:
           cache: true
           
       - name: Install build dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
@@ -137,6 +141,7 @@ jobs:
           fi
           
       - name: Prepare environment
+        shell: bash
         run: |
           # 设置输出文件名
           BINARY_NAME="${{ env.PROJECT_NAME }}"
@@ -151,9 +156,10 @@ jobs:
           echo "BINARY_NAME=$BINARY_NAME" >> $GITHUB_ENV
           
       - name: Build Go binary
+        shell: bash
         run: |
           # 设置LDFLAGS包含版本信息
-          LDFLAGS="-s -w -X main.Version=${{ needs.prepare.outputs.version_number }} -X main.BuildDate=${{ needs.prepare.outputs.build_date }}"
+          LDFLAGS="-s -w -X 'main.Version=${{ needs.prepare.outputs.version_number }}' -X 'main.BuildDate=${{ needs.prepare.outputs.build_date }}'"
           
           # 构建二进制文件
           go build -trimpath -ldflags "$LDFLAGS" -o "$BINARY_NAME" .
@@ -168,7 +174,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-binary
-          path: ${{ env.PROJECT_NAME }}-${{ matrix.bin_suffix }}  # 只上传二进制文件
+          path: ${{ env.PROJECT_NAME }}-${{ matrix.bin_suffix }}
+          if-no-files-found: error
 
   create_release:
     name: Create GitHub Release
@@ -186,6 +193,7 @@ jobs:
           merge-multiple: true
           
       - name: Prepare release assets
+        shell: bash
         run: |
           # 创建统一的发布目录
           mkdir -p release_assets
@@ -211,10 +219,10 @@ jobs:
             | Platform        | File                              |
             |-----------------|-----------------------------------|
             | Linux           | `nexus_server-linux`              |
-            | Linux(备用)     | `nexus_server-linux-static`       |
+            | Linux(静态)     | `nexus_server-linux-static`       |
             | Windows         | `nexus_server-windows.exe`        |
-            | macOS(Intel芯片)    | `nexus_server-macos-intel`        |
-            | macOS(M芯片)      | `nexus_server-macos-arm`          |
+            | macOS(Intel)    | `nexus_server-macos-intel`        |
+            | macOS(ARM)      | `nexus_server-macos-arm`          |
             
           draft: false
           prerelease: false
