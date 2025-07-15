@@ -16,11 +16,14 @@ type Database struct {
 }
 
 func NewDatabase() (*Database, error) {
-	db, err := sql.Open("sqlite3", "tasks.db")
+	db, err := sql.Open("sqlite3", "tasks.db?_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
-
+	// 启用WAL模式
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		return nil, fmt.Errorf("failed to set WAL mode: %v", err)
+	}
 	if err := createTables(db); err != nil {
 		return nil, err
 	}
@@ -32,6 +35,16 @@ func NewDatabase() (*Database, error) {
 				log.Printf("Error releasing expired locks: %v", err)
 			}
 			time.Sleep(1 * time.Minute)
+
+		}
+	}()
+	// 启动后台任务清理超时客户端
+	go func() {
+		for {
+			if err := releaseExpiredClient(db); err != nil {
+				log.Printf("Error releasing expired Client: %v", err)
+			}
+			time.Sleep(10 * time.Second)
 
 		}
 	}()
@@ -58,6 +71,20 @@ func createTables(db *sql.DB) error {
 	);`
 
 	if _, err := db.Exec(createTable); err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	createClientTable := `
+	CREATE TABLE IF NOT EXISTS client (
+		client_uuid VARCHAR(50) NOT NULL PRIMARY KEY,
+		client_key VARCHAR(50) NOT NULL,
+		Client_ip VARCHAR(50) NOT NULL,
+		heart_time INTEGER DEFAULT 0,
+		cpu INTEGER DEFAULT 0,
+		memory INTEGER DEFAULT 0
+	);`
+
+	if _, err := db.Exec(createClientTable); err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 	return nil
@@ -175,6 +202,21 @@ func releaseExpiredLocks(db *sql.DB) error {
 	return nil
 }
 
+// 释放超时客户端
+func releaseExpiredClient(db *sql.DB) error {
+	timeout := time.Now().Add(-30 * time.Second).Unix()
+	timeoutCount, err := db.Exec("DELETE FROM client WHERE heart_time < ?", timeout)
+	if err != nil {
+		return fmt.Errorf("failed to release expired client: %w", err)
+	}
+	c, _ := timeoutCount.RowsAffected()
+
+	if c > 0 {
+		log.Println("已清理离线客户端，数量：", c)
+	}
+
+	return nil
+}
 func (d *Database) CreateTask(task models.TaskData) error {
 	// 确保任务创建时间为当前时间
 	task.CreatedAt = time.Now()
@@ -461,4 +503,58 @@ func scanTasks(rows *sql.Rows) ([]models.TaskData, error) {
 	}
 
 	return tasks, nil
+}
+
+func (d *Database) UpsertClient(client models.Client) error {
+	_, err := d.db.Exec(`
+		INSERT OR REPLACE INTO client 
+		(client_uuid, client_key, client_ip, heart_time, cpu, memory)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		client.UUID, client.Key, client.IP, client.HeartTime, client.CPU, client.Memory)
+	return err
+}
+
+func (d *Database) GetClientStates() ([]models.ClientState, error) {
+	query := `
+        SELECT 
+            main.client_ip,
+            main.client_key,
+            COUNT(DISTINCT sub.client_uuid) AS client_count,
+            MAX(main.heart_time) AS last_updated,
+            (SELECT cpu FROM client 
+             WHERE client_key = main.client_key 
+             ORDER BY heart_time DESC 
+             LIMIT 1) AS cpu,
+            (SELECT memory FROM client 
+             WHERE client_key = main.client_key 
+             ORDER BY heart_time DESC 
+             LIMIT 1) AS memory
+        FROM client AS main
+        INNER JOIN client AS sub ON main.client_key = sub.client_key
+        GROUP BY main.client_key;
+    `
+
+	rows, err := d.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var states []models.ClientState
+	for rows.Next() {
+		var state models.ClientState
+		err := rows.Scan(
+			&state.ClientIp,
+			&state.ClientKey,
+			&state.ClientCount,
+			&state.LastUpdated,
+			&state.CPU,
+			&state.Memory,
+		)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, state)
+	}
+	return states, nil
 }

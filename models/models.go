@@ -44,3 +44,22 @@ type TaskStats struct {
 	ProcessingRate  float64 `json:"processing_rate"`  // 任务/分钟
 	AvgProcessTime  float64 `json:"avg_process_time"` // 单位：秒
 }
+
+// 定义数据结构
+type Client struct {
+	UUID      string `json:"client_uuid"`
+	Key       string `json:"client_key"`
+	IP        string `json:"client_ip"`
+	HeartTime int64  `json:"heart_time"`
+	CPU       int    `json:"cpu"`
+	Memory    int    `json:"memory"`
+}
+
+type ClientState struct {
+	ClientIp    string `json:"client_ip"`
+	ClientKey   string `json:"client_key"`
+	ClientCount int    `json:"client_count"`
+	LastUpdated int64  `json:"last_updated"`
+	CPU         int    `json:"cpu"`
+	Memory      int    `json:"memory"`
+}

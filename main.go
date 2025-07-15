@@ -42,11 +42,11 @@ var assetFS embed.FS
 var db *database.Database
 
 // 定义全局信号量（最大并发数）
-const maxConcurrent = 5 // 最大并发数
+const maxConcurrent = 10 // 最大并发数
 var sem = make(chan struct{}, maxConcurrent)
 
 // 工作协程函数
-func getNodes() bool {
+func getNodes(address string) bool {
 
 	c := req.C()
 	c.SetRedirectPolicy(req.NoRedirectPolicy())
@@ -61,28 +61,30 @@ func getNodes() bool {
 	// c.SetProxyURL("http://127.0.0.1:2025")
 
 	r := c.R()
-	resp, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+config.Address)
+	resp, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
 	if err != nil {
-		fmt.Println("读取节点失败：{}", err)
+		fmt.Println(address, "读取节点失败：{}", err)
 		return false
 	}
 	res := &gen.UserResponse{}
 
 	proto.Unmarshal(resp.Bytes(), res)
 	nodes.StoreNodes(res)
+	count := len(res.Nodes)
 	if len(res.Nodes) == 50 {
 		resp2, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 		if err != nil {
-			fmt.Println("读取节点失败：{}", err)
+			fmt.Println(address, "读取节点失败：{}", err)
 			return false
 		}
 		res2 := &gen.UserResponse{}
 		proto.Unmarshal(resp2.Bytes(), res2)
 		nodes.StoreNodes(res2)
+		count += len(res2.Nodes)
 	}
-	log.Println("读取到节点节点数量：", len(nodes.GetAllNodes()))
-	if len(nodes.GetAllNodes()) <= 10 {
-		log.Println("节点节点数量不足10个，请创建节点后再运行！")
+	log.Println(address, "读取到节点节点数量：", count)
+	if count <= 10 {
+		log.Println(address, "节点节点数量不足10个，请创建节点后再运行！")
 		return false
 	}
 	return true
@@ -182,13 +184,17 @@ func worker(ctx context.Context, No string) {
 			bin := resp.Bytes()
 
 			if strings.Contains(string(bin), "Node has too many tasks") {
-				log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点任务过多，该节点已无法使用，可进行删除，删除后需重启服务端。")
+
 				continue
 			} else if strings.Contains(string(bin), "Node not found") {
-				log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点未找到，如果进行了节点删除和添加，需要重启服务端。")
+
 				continue
 			} else if strings.Contains(string(bin), "Rate limit exceeded for node") {
-				log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量、减少配置中的worker和queue数。")
 				continue
 			}
 			task := &gen.GetProofTaskResponse{}
@@ -231,12 +237,18 @@ func main() {
 	}
 
 	log.Println("钱包地址：" + config.Address)
-	log.Println("读取节点列表...")
-	if !getNodes() {
-		log.Println("读取节点列表失败！")
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		return
+	// 使用逗号分割字符串
+	parts := strings.Split(config.Address, ",")
+
+	// 遍历并打印分割结果
+	for _, item := range parts {
+		log.Println(item, "读取节点列表...")
+		if !getNodes(item) {
+			log.Println(item, "读取节点列表失败！")
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Scan()
+			return
+		}
 	}
 
 	// 初始化数据库
@@ -330,9 +342,13 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 		taskGroup.GET("", handler.ListTasks)
 
 		// 新增API端点
-		taskGroup.GET("/getTaskStats", handler.GetTaskStats) // 提取任务
+		taskGroup.GET("/getTaskStats", handler.GetTaskStats) // 获取任务状态
 		taskGroup.GET("/pick", handler.PickTask)             // 提取任务
 		taskGroup.POST("/submit", handler.SubmitResult)      // 提交任务结果
+
+		taskGroup.POST("/clientHeart", handler.ClientHeart)   // 客户端心跳
+		taskGroup.GET("/clientList", handler.GetClientStates) // 获取客户端状态
+
 	}
 
 	return router

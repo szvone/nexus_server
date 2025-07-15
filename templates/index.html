@@ -68,10 +68,10 @@
             <h1 class="text-[clamp(2rem,5vw,3rem)] font-bold text-dark mb-2 text-shadow">
                 <i class="fa fa-tasks text-primary mr-3"></i>Nexus分布式计算节点监控面板
             </h1>
-                 <div id="last-updated" class="text-sm text-gray-500 mt-2">by : vone</div>
+            <div id="last-updated" class="text-sm text-gray-500 mt-2">by : vone</div>
         </header>
-           <!-- 按钮区域 -->
-        <div class="flex flex-wrap justify-center gap-4 mb-10" >
+        <!-- 按钮区域 -->
+        <div class="flex flex-wrap justify-center gap-4 mb-10">
             <button id="reset-params-btn"
                 class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
                 Twitter
@@ -223,6 +223,42 @@
             </div>
         </div>
 
+        <!-- 客户端列表表格 -->
+        <div class="bg-white rounded-xl shadow-card p-6 mb-10 transform transition-all duration-300 hover:shadow-lg">
+            <h2 class="text-xl font-bold text-dark mb-6 flex items-center">
+                <i class="fa fa-list text-primary mr-2"></i>机器列表
+            </h2>
+            <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                <table class="w-full min-w-[640px] border-collapse">
+                    <thead>
+                        <tr class="bg-gray-50 text-left">
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                机器 IP</th>
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                机器标识</th>
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                客户端数量</th>
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                最后更新时间</th>
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                CPU 使用率</th>
+                            <th
+                                class="px-6 py-3 text-sm font-semibold text-gray-600 uppercase tracking-wider border-b border-gray-200">
+                                内存使用率</th>
+                        </tr>
+                    </thead>
+                    <tbody id="client-list-table" class="divide-y divide-gray-200">
+                        <!-- 数据将动态插入这里 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- 图表区域 -->
         <div class="bg-white rounded-xl shadow-card p-6 mb-10">
             <h2 class="text-xl font-bold text-dark mb-6 flex items-center">
@@ -233,7 +269,6 @@
             </div>
         </div>
 
-     
         <!-- 重置服务器参数模态框 -->
         <div id="reset-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
             <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 transform transition-all-300 scale-95 opacity-0"
@@ -461,7 +496,7 @@
 
                 // 更新UI
                 updateUI(mockData);
-                updateChart((json.processing_rate).toFixed(1),(json.avg_process_time).toFixed(2));
+                updateChart((json.processing_rate).toFixed(1), (json.avg_process_time).toFixed(2));
 
                 // 更新最后更新时间
 
@@ -563,6 +598,112 @@
             }
         }
 
+        // 获取客户端列表数据
+        async function fetchClientList() {
+            try {
+                const response = await fetch('/tasks/clientList');
+                if (!response.ok) {
+                    throw new Error(`HTTP错误，状态码: ${response.status}`);
+                }
+                const data = await response.json();
+                updateClientList(data);
+            } catch (error) {
+                console.error('获取客户端列表数据失败:', error);
+            }
+        }
+        // 更新客户端列表表格
+        function updateClientList(data) {
+            const tableBody = document.getElementById('client-list-table');
+            tableBody.innerHTML = '';
+
+            data.forEach((client, index) => {
+                const row = document.createElement('tr');
+                row.className = index % 2 === 0 ? 'bg-white hover:bg-gray-50 transition-colors' : 'bg-gray-50 hover:bg-gray-100 transition-colors';
+
+                // 客户端IP单元格
+                const clientIpCell = document.createElement('td');
+                clientIpCell.className = 'px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-b border-gray-200';
+                clientIpCell.textContent = client.client_ip;
+                row.appendChild(clientIpCell);
+
+                // 客户端标识单元格
+                const clientKeyCell = document.createElement('td');
+                clientKeyCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-600 border-b border-gray-200';
+                clientKeyCell.textContent = client.client_key;
+                row.appendChild(clientKeyCell);
+
+                // 客户端数量单元格
+                const clientCountCell = document.createElement('td');
+                clientCountCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-600 border-b border-gray-200';
+                clientCountCell.textContent = client.client_count;
+                row.appendChild(clientCountCell);
+
+                // 最后更新时间单元格
+                const lastUpdatedCell = document.createElement('td');
+                lastUpdatedCell.className = 'px-6 py-4 whitespace-nowrap text-sm text-gray-600 border-b border-gray-200';
+                const date = new Date(client.last_updated * 1000);
+                lastUpdatedCell.textContent = date.toLocaleString();
+                row.appendChild(lastUpdatedCell);
+
+                // CPU使用率单元格
+                const cpuCell = document.createElement('td');
+                cpuCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+
+                // 创建CPU进度条容器
+                const cpuProgressContainer = document.createElement('div');
+                cpuProgressContainer.className = 'flex items-center';
+
+                // 创建CPU进度条
+                const cpuProgressBar = document.createElement('div');
+                cpuProgressBar.className = 'flex-1 h-2 bg-gray-200 rounded-full overflow-hidden';
+
+                // 创建CPU进度条填充
+                const cpuProgressFill = document.createElement('div');
+                cpuProgressFill.className = 'h-full rounded-full bg-primary transition-all duration-500';
+                cpuProgressFill.style.width = `${client.cpu}%`;
+
+                // 添加CPU百分比文本
+                const cpuText = document.createElement('span');
+                cpuText.className = 'ml-3 text-sm font-medium text-gray-700';
+                cpuText.textContent = `${client.cpu}%`;
+
+                cpuProgressBar.appendChild(cpuProgressFill);
+                cpuProgressContainer.appendChild(cpuProgressBar);
+                cpuProgressContainer.appendChild(cpuText);
+                cpuCell.appendChild(cpuProgressContainer);
+                row.appendChild(cpuCell);
+
+                // 内存使用率单元格
+                const memoryCell = document.createElement('td');
+                memoryCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+
+                // 创建内存进度条容器
+                const memoryProgressContainer = document.createElement('div');
+                memoryProgressContainer.className = 'flex items-center';
+
+                // 创建内存进度条
+                const memoryProgressBar = document.createElement('div');
+                memoryProgressBar.className = 'flex-1 h-2 bg-gray-200 rounded-full overflow-hidden';
+
+                // 创建内存进度条填充
+                const memoryProgressFill = document.createElement('div');
+                memoryProgressFill.className = 'h-full rounded-full bg-secondary transition-all duration-500';
+                memoryProgressFill.style.width = `${client.memory}%`;
+
+                // 添加内存百分比文本
+                const memoryText = document.createElement('span');
+                memoryText.className = 'ml-3 text-sm font-medium text-gray-700';
+                memoryText.textContent = `${client.memory}%`;
+
+                memoryProgressBar.appendChild(memoryProgressFill);
+                memoryProgressContainer.appendChild(memoryProgressBar);
+                memoryProgressContainer.appendChild(memoryText);
+                memoryCell.appendChild(memoryProgressContainer);
+                row.appendChild(memoryCell);
+
+                tableBody.appendChild(row);
+            });
+        }
         // 初始化事件监听
         function initEventListeners() {
             // 重置服务器参数按钮
@@ -640,9 +781,12 @@
 
             // 首次加载数据
             fetchData();
+            fetchClientList();
 
-            // 每1秒获取一次数据
+            // 每1秒获取一次任务数据
             setInterval(fetchData, 1000);
+            // 每5秒获取一次客户端列表数据
+            setInterval(fetchClientList, 2000);
         });
     </script>
 </body>

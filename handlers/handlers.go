@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"nexus_server/database"
 	"nexus_server/models"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -168,6 +169,44 @@ func (h *TaskHandler) SubmitResult(c *gin.Context) {
 	})
 }
 
+func (h *TaskHandler) ClientHeart(c *gin.Context) {
+	var req struct {
+		UUID   string `json:"client_uuid" binding:"required"`
+		Key    string `json:"client_key" binding:"required"`
+		CPU    int    `json:"cpu" binding:"required"`
+		Memory int    `json:"memory" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	client := models.Client{
+		UUID:      req.UUID,
+		Key:       req.Key,
+		IP:        c.ClientIP(),      // 获取客户端IP
+		HeartTime: time.Now().Unix(), // 使用服务器当前时间戳
+		CPU:       req.CPU,
+		Memory:    req.Memory,
+	}
+
+	if err := h.db.UpsertClient(client); err != nil {
+		handleDBError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, client)
+}
+
+func (h *TaskHandler) GetClientStates(c *gin.Context) {
+	clients, err := h.db.GetClientStates()
+	if handleDBError(c, err) {
+		return
+	}
+	c.JSON(http.StatusOK, clients)
+}
+
 func sendErrorResponse(c *gin.Context, statusCode int, message string) {
 	println(message)
 	c.JSON(statusCode, gin.H{"error": message})
@@ -179,7 +218,7 @@ func handleDBError(c *gin.Context, err error) bool {
 	}
 
 	if errors.Is(err, sql.ErrNoRows) {
-		sendErrorResponse(c, http.StatusNotFound, "Task not found")
+		sendErrorResponse(c, http.StatusNotFound, err.Error())
 		return true
 	}
 
