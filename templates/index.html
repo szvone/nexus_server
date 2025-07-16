@@ -74,9 +74,17 @@
         <div class="flex flex-wrap justify-center gap-4 mb-10">
             <button id="reset-params-btn"
                 class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
-                Twitter
+                设置运行参数
             </button>
             <button id="clear-db-btn"
+                class="bg-danger hover:bg-danger/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
+                清空任务数据
+            </button>
+            <button id="go-twitter"
+                class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
+                Twitter
+            </button>
+            <button id="go-github"
                 class="bg-secondary hover:bg-secondary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
                 Github
             </button>
@@ -271,10 +279,10 @@
 
         <!-- 重置服务器参数模态框 -->
         <div id="reset-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-            <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 transform transition-all-300 scale-95 opacity-0"
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 transform transition-all-300 scale-95 opacity-0"
                 id="modal-content">
                 <div class="flex justify-between items-center mb-6">
-                    <h3 class="text-xl font-bold text-dark">重置服务器参数</h3>
+                    <h3 class="text-xl font-bold text-dark">设置运行参数</h3>
                     <button id="close-modal" class="text-gray-400 hover:text-gray-600 transition-colors">
                         <i class="fa fa-times text-xl"></i>
                     </button>
@@ -304,6 +312,13 @@
                             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
                             placeholder="多开计算程序数 x 3" min="1">
                     </div>
+                    <div>
+                        <label for="address" class="block text-sm font-medium text-gray-700 mb-1">任务钱包地址</label>
+                        <textarea id="address"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                            placeholder="0x钱包地址，一行一个" rows="5"></textarea>
+                    </div>
+
                     <div class="flex justify-end gap-3 mt-6">
                         <button type="button" id="cancel-reset"
                             class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">取消</button>
@@ -520,6 +535,37 @@
             }
         }
 
+
+        async function getConfig() {
+            try {
+                // 模拟API请求
+                const response = await fetch('/getConfig');
+
+                if (!response.ok) {
+                    throw new Error(`HTTP错误，状态码: ${response.status}`);
+                }
+                let json = await response.json()
+                console.log(json)
+
+                // 更新API状态
+                document.getElementById('work-port').value = json.Port;
+                document.getElementById('thread-count').value = json.Worker;
+                document.getElementById('queue-size').value = json.Queue;
+                document.getElementById('address').innerHTML = json.Address.split(',').join("\n");
+                document.getElementById('work-address').value = json.Host;
+
+            } catch (error) {
+                console.error('获取数据失败:', error);
+
+                // 更新API状态
+                document.getElementById('api-status').textContent = '错误';
+                document.getElementById('api-status-text').textContent = '数据获取失败';
+                document.getElementById('api-status-text').className = 'text-danger font-medium';
+
+                return null;
+            }
+        }
+
         // 更新UI
         function updateUI(data) {
             document.getElementById('processed-tasks').textContent = data.processedTasks.toLocaleString();
@@ -547,23 +593,20 @@
         // 重置服务器参数
         async function resetServerParams(formData) {
             try {
-                // 模拟API请求
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                const response = await fetch('/setConfig', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
 
-                // 实际使用时请替换为你的API地址
-                // const response = await fetch('/api/reset-params', {
-                //     method: 'POST',
-                //     headers: {
-                //         'Content-Type': 'application/json'
-                //     },
-                //     body: JSON.stringify(formData)
-                // });
+                if (!response.ok) {
+                    throw new Error(`HTTP错误，状态码: ${response.status}`);
+                }
 
-                // if (!response.ok) {
-                //     throw new Error(`HTTP错误，状态码: ${response.status}`);
-                // }
-
-                showToast('服务器参数已重置');
+                showToast('服务器参数已重置，重启服务端生效！');
+                getConfig()
                 return true;
             } catch (error) {
                 console.error('重置参数失败:', error);
@@ -575,17 +618,14 @@
         // 清空任务数据库
         async function clearTaskDatabase() {
             try {
-                // 模拟API请求
-                await new Promise(resolve => setTimeout(resolve, 1000));
 
-                // 实际使用时请替换为你的API地址
-                // const response = await fetch('/api/clear-db', {
-                //     method: 'POST'
-                // });
+                const response = await fetch('/tasks', {
+                    method: 'DELETE'
+                });
 
-                // if (!response.ok) {
-                //     throw new Error(`HTTP错误，状态码: ${response.status}`);
-                // }
+                if (!response.ok) {
+                    throw new Error(`HTTP错误，状态码: ${response.status}`);
+                }
 
                 showToast('任务数据库已清空');
                 // 刷新数据
@@ -615,6 +655,31 @@
         function updateClientList(data) {
             const tableBody = document.getElementById('client-list-table');
             tableBody.innerHTML = '';
+
+            // 处理数据为 null 或空数组的情况
+            if (!data || data.length === 0) {
+                // 创建空状态行，跨列显示提示信息
+                const emptyRow = document.createElement('tr');
+                emptyRow.className = 'bg-white';
+
+                const emptyCell = document.createElement('td');
+                // 跨6列（与表格列数一致）
+                emptyCell.colSpan = 6;
+                emptyCell.className = 'px-6 py-10 text-center';
+
+                // 空状态内容（带图标和文字）
+                emptyCell.innerHTML = `
+            <div class="flex flex-col items-center justify-center text-gray-500">
+                <i class="fa fa-server text-3xl mb-3 opacity-50"></i>
+                <p class="text-lg">无机器在线</p>
+                <p class="text-sm mt-1 opacity-75">暂无客户端连接到服务器</p>
+            </div>
+        `;
+
+                emptyRow.appendChild(emptyCell);
+                tableBody.appendChild(emptyRow);
+                return; // 终止后续执行
+            }
 
             data.forEach((client, index) => {
                 const row = document.createElement('tr');
@@ -704,12 +769,25 @@
                 tableBody.appendChild(row);
             });
         }
+        function formatAddress(address) {
+            return address
+                .split(/\r\n|\n|\r/)   // 处理所有换行符（\r\n, \n, \r）
+                .map(line => line.trim()) // 删除每行首尾空格
+                .filter(line => line !== '') // 删除空行
+                .join(','); // 用逗号连接
+        }
         // 初始化事件监听
         function initEventListeners() {
+            document.getElementById('go-twitter').addEventListener('click', () => {
+                window.location.href = "https://x.com/Web3_vone"
+            });
+            document.getElementById('go-github').addEventListener('click', () => {
+                window.location.href = "https://github.com/szvone/nexusApp"
+            });
             // 重置服务器参数按钮
+
             document.getElementById('reset-params-btn').addEventListener('click', () => {
                 showModal('reset-modal', 'modal-content');
-                window.location.href = "https://x.com/Web3_vone"
             });
 
             // 关闭重置模态框
@@ -727,19 +805,21 @@
                 e.preventDefault();
 
                 const workAddress = document.getElementById('work-address').value;
-                const threadCount = document.getElementById('thread-count').value;
                 const workPort = document.getElementById('work-port').value;
+                const threadCount = document.getElementById('thread-count').value;
                 const queueSize = document.getElementById('queue-size').value;
+                const address = document.getElementById('address').value;
 
                 const formData = {
-                    workAddress,
-                    threadCount,
-                    workPort,
-                    queueSize
+                    Host: workAddress,
+                    Port: parseInt(workPort),
+                    Worker: parseInt(threadCount),
+                    Queue: parseInt(queueSize),
+                    Address: formatAddress(address)
                 };
 
                 // 验证表单
-                if (!workAddress || !threadCount || !workPort || !queueSize) {
+                if (!workAddress || !threadCount || !workPort || !queueSize || !address) {
                     showToast('请填写所有字段', false);
                     return;
                 }
@@ -755,8 +835,7 @@
 
             // 清空数据库按钮
             document.getElementById('clear-db-btn').addEventListener('click', () => {
-                // showModal('clear-modal', 'clear-modal-content');
-                window.location.href = "https://github.com/szvone/nexusApp"
+                showModal('clear-modal', 'clear-modal-content');
 
             });
 
@@ -778,7 +857,7 @@
         document.addEventListener('DOMContentLoaded', () => {
             initChart();
             initEventListeners();
-
+            getConfig();
             // 首次加载数据
             fetchData();
             fetchClientList();

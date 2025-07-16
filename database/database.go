@@ -289,12 +289,11 @@ func (d *Database) UpdateTask(task models.TaskData) error {
 	return nil
 }
 
-func (d *Database) DeleteTask(taskID string) error {
-	res, err := d.db.Exec("DELETE FROM tasks WHERE task_id = ?", taskID)
+func (d *Database) DeleteTask() error {
+	res, err := d.db.Exec("DELETE FROM tasks")
 	if err != nil {
 		return err
 	}
-
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return sql.ErrNoRows
 	}

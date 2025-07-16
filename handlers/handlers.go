@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"nexus_server/database"
 	"nexus_server/models"
@@ -82,13 +85,8 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 }
 
 func (h *TaskHandler) DeleteTask(c *gin.Context) {
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
-		return
-	}
 
-	if err := h.db.DeleteTask(taskID); handleDBError(c, err) {
+	if err := h.db.DeleteTask(); handleDBError(c, err) {
 		return
 	}
 
@@ -170,15 +168,38 @@ func (h *TaskHandler) SubmitResult(c *gin.Context) {
 }
 
 func (h *TaskHandler) ClientHeart(c *gin.Context) {
+	// 首先捕获原始请求体
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Failed to read request body",
+			"raw":   "", // 无法读取时设为空
+		})
+		return
+	}
+
+	// 重置请求体供后续绑定使用
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(rawBody))
+
 	var req struct {
 		UUID   string `json:"client_uuid" binding:"required"`
 		Key    string `json:"client_key" binding:"required"`
-		CPU    int    `json:"cpu" binding:"required"`
-		Memory int    `json:"memory" binding:"required"`
+		CPU    int    `json:"cpu" `
+		Memory int    `json:"memory" `
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		// 获取原始文本并转为字符串（避免二进制数据问题）
+		rawText := string(rawBody)
+		if rawText == "" {
+			rawText = base64.StdEncoding.EncodeToString(rawBody)
+		}
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Invalid request",
+			"details": err.Error(), // 绑定错误详情
+			"raw":     rawText,     // 原始POST数据
+		})
 		return
 	}
 

@@ -29,6 +29,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/imroc/req/v3"
+	"github.com/pkg/browser"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -42,7 +43,7 @@ var assetFS embed.FS
 var db *database.Database
 
 // 定义全局信号量（最大并发数）
-const maxConcurrent = 10 // 最大并发数
+const maxConcurrent = 20 // 最大并发数
 var sem = make(chan struct{}, maxConcurrent)
 
 // 工作协程函数
@@ -212,6 +213,7 @@ func worker(ctx context.Context, No string) {
 
 // Config 定义配置结构
 type Config struct {
+	Host    string `yaml:"host"`
 	Address string `yaml:"address"`
 	Port    int    `yaml:"port"`
 	Worker  int    `yaml:"worker"`
@@ -223,31 +225,29 @@ var config Config
 func main() {
 	file, err := os.ReadFile("./nexus_server.txt")
 	if err != nil {
-		fmt.Printf("读取配置文件失败: %v\n", err)
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		return
-	}
-	err = yaml.Unmarshal(file, &config)
-	if err != nil {
-		fmt.Printf("配置文件读取失败: %v\n", err)
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		return
-	}
+		log.Println("无配置文件或配置文件错误，已使用默认配置，请前往控制面板设置钱包地址！")
+		// fmt.Printf("读取配置文件失败: %v\n", err)
+		// scanner := bufio.NewScanner(os.Stdin)
+		// scanner.Scan()
+		config = Config{
+			Host:    "127.0.0.1",
+			Address: "",
+			Port:    8182,
+			Worker:  5,
+			Queue:   20,
+		}
 
-	log.Println("钱包地址：" + config.Address)
-	// 使用逗号分割字符串
-	parts := strings.Split(config.Address, ",")
-
-	// 遍历并打印分割结果
-	for _, item := range parts {
-		log.Println(item, "读取节点列表...")
-		if !getNodes(item) {
-			log.Println(item, "读取节点列表失败！")
-			scanner := bufio.NewScanner(os.Stdin)
-			scanner.Scan()
-			return
+	} else {
+		err = yaml.Unmarshal(file, &config)
+		if err != nil {
+			log.Println("无配置文件或配置文件错误，已使用默认配置，请前往控制面板设置钱包地址！")
+			config = Config{
+				Host:    "127.0.0.1",
+				Address: "",
+				Port:    8182,
+				Worker:  5,
+				Queue:   20,
+			}
 		}
 	}
 
@@ -265,9 +265,28 @@ func main() {
 	// 创建上下文用于关闭所有goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// 循环获取节点
-	for i := 1; i <= config.Worker; i++ {
-		go worker(ctx, strconv.Itoa(i)) // 每行启动一个goroutine
+
+	if config.Address != "" {
+		log.Println("钱包地址：" + config.Address)
+		// 使用逗号分割字符串
+		parts := strings.Split(config.Address, ",")
+
+		// 遍历并打印分割结果
+		for _, item := range parts {
+			log.Println(item, "读取节点列表...")
+			if !getNodes(item) {
+				log.Println(item, "读取节点列表失败！")
+				scanner := bufio.NewScanner(os.Stdin)
+				scanner.Scan()
+				return
+			}
+		}
+
+		// 循环获取节点
+		for i := 1; i <= config.Worker; i++ {
+			go worker(ctx, strconv.Itoa(i)) // 每行启动一个goroutine
+		}
+
 	}
 
 	go func() {
@@ -278,9 +297,16 @@ func main() {
 		// 启动服务
 		// fmt.Println("Server running on :")
 		log.Println("节点服务端启动，运行端口：", config.Port)
+		go func() {
+			time.Sleep(3 * time.Second)
+			url := "http://127.0.0.1:" + strconv.Itoa(config.Port)
+			browser.OpenURL(url)
+		}()
+
 		if err := router.Run(":" + strconv.Itoa(config.Port)); err != nil {
 			log.Fatalf("Server failed to start: %v", err)
 		}
+
 	}()
 
 	// 等待退出信号
@@ -332,13 +358,63 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 	router.GET("/", func(c *gin.Context) {
 		c.HTML(200, "index.html", nil)
 	})
+
+	router.GET("/getConfig", func(c *gin.Context) {
+		c.JSON(http.StatusOK, config)
+	})
+	router.POST("/setConfig", func(c *gin.Context) {
+		var _config Config
+		if err := c.ShouldBindJSON(&_config); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
+
+		if _config.Host == "" || _config.Address == "" || _config.Port == 0 || _config.Queue == 0 || _config.Worker == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "需要填写完整"})
+			return
+		}
+		yamlData, err := yaml.Marshal(&_config)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "YAML编码失败: " + err.Error()})
+			return
+		}
+		err = os.WriteFile("./nexus_server.txt", yamlData, 0644)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "写入文件失败: " + err.Error()})
+			return
+		}
+
+		type ClientConfig struct {
+			Host string `yaml:"host"`
+			Port int    `yaml:"port"`
+		}
+		clientConfig := ClientConfig{
+			Host: _config.Host,
+			Port: _config.Port,
+		}
+
+		yamlDataClient, err := yaml.Marshal(&clientConfig)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "YAML编码失败: " + err.Error()})
+			return
+		}
+		err = os.WriteFile("./nexus_client.txt", yamlDataClient, 0644)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "写入文件失败: " + err.Error()})
+			return
+		}
+		log.Println("配置文件已更新，请重启服务端！")
+
+		c.JSON(http.StatusOK, config)
+	})
+
 	// 任务管理API
 	taskGroup := router.Group("/tasks")
 	{
 		taskGroup.POST("", handler.CreateTask)
 		taskGroup.GET("/:task_id", handler.GetTask)
 		taskGroup.PUT("/:task_id", handler.UpdateTask)
-		taskGroup.DELETE("/:task_id", handler.DeleteTask)
+		taskGroup.DELETE("", handler.DeleteTask)
 		taskGroup.GET("", handler.ListTasks)
 
 		// 新增API端点
