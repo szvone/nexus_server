@@ -78,6 +78,7 @@ func parseNodeLine(line string) (*gen.Node, error) {
 
 // 工作协程函数
 func getNodes(address string) bool {
+	log.Println("读取节点列表...")
 
 	// 清空当前缓存
 	var nodeList []*gen.Node
@@ -101,10 +102,10 @@ func getNodes(address string) bool {
 			r := c.R()
 			resp, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
 			if err != nil {
-				log.Println(address, "读取节点失败，重新尝试...")
+				log.Println("读取节点失败，重新尝试...")
 				resp, err = r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
 				if err != nil {
-					log.Println(address, "读取节点失败：", err)
+					log.Println("读取节点失败：", err)
 					return false
 				}
 			}
@@ -112,7 +113,7 @@ func getNodes(address string) bool {
 			bin := resp.Bytes()
 			err = proto.Unmarshal(bin, res)
 			if err != nil {
-				log.Println(address, "读取节点失败：", string(bin))
+				log.Println("读取节点失败：", string(bin))
 				return false
 			}
 			line := ""
@@ -125,10 +126,10 @@ func getNodes(address string) bool {
 			if len(res.Nodes) == 50 {
 				resp2, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 				if err != nil {
-					log.Println(address, "读取节点失败，重新尝试...")
+					log.Println("读取节点失败，重新尝试...")
 					resp2, err = r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 					if err != nil {
-						log.Println(address, "读取节点失败：", err)
+						log.Println("读取节点失败：", err)
 						return false
 					}
 				}
@@ -136,7 +137,7 @@ func getNodes(address string) bool {
 				bin = resp2.Bytes()
 				err = proto.Unmarshal(bin, res2)
 				if err != nil {
-					log.Println(address, "读取节点失败：", string(bin))
+					log.Println("读取节点失败：", string(bin))
 					return false
 				}
 				nodes.StoreNodes(res2)
@@ -147,29 +148,33 @@ func getNodes(address string) bool {
 				}
 
 			}
-			log.Println(address, "读取到节点节点数量：", count)
+			log.Println("读取到节点节点数量：", count)
 			if count <= 10 {
-				log.Println(address, "节点节点数量不足10个，请创建节点后再运行！")
+				log.Println("节点节点数量不足10个，请创建节点后再运行！")
 				return false
 			}
 			// 写出缓存
 			f, err := os.OpenFile("./"+address+".txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 			if err != nil {
-				log.Println(address, "写出文件失败，请检查程序权限！", err)
+				log.Println("写出文件失败，请检查程序权限！", err)
 				return false
 			}
 			defer f.Close()
 			if _, err := f.WriteString(line); err != nil {
-				log.Println(address, "写出文件失败，请检查程序权限！", err)
+				log.Println("写出文件失败，请检查程序权限！", err)
 				return false
 			}
+			log.Println("已生成节点缓存文件：", address+".txt")
+
 			return true
 		} else {
-			log.Println(address, "检查缓存失败，请检查程序权限！", err)
+			log.Println("检查缓存失败，请检查程序权限！", err)
 			return false
 		}
 	}
 	defer file.Close()
+
+	log.Println("检测到缓存文件：", address+".txt")
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
@@ -183,7 +188,7 @@ func getNodes(address string) bool {
 		// 解析每行内容
 		node, err := parseNodeLine(line)
 		if err != nil {
-			log.Printf(address+" 解析错误(第%d行): %v - 内容: '%s'\n", lineNum, err, line)
+			log.Printf("缓存文件解析错误：解析错误(第%d行): %v - 内容: '%s'\n", lineNum, err, line)
 			continue
 		}
 
@@ -192,11 +197,11 @@ func getNodes(address string) bool {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Println(address, "检查缓存失败，请检查程序权限！", err)
+		log.Println("检查缓存失败，请检查程序权限！", err)
 		return false
 	}
 	nodes.StoreNodesUseList(nodeList)
-	log.Printf(address+" 成功从缓存文件加载 %d 个节点，如果删除了或者更新了节点，请删除缓存文件以获取最新的节点列表。\n", len(nodeList))
+	log.Printf("成功从缓存文件加载 %d 个节点，如果删除了或者更新了节点，请删除缓存文件以获取最新的节点列表。\n", len(nodeList))
 	return true
 }
 
@@ -364,19 +369,22 @@ func main() {
 	defer cancel()
 
 	if config.Address != "" {
-		log.Println("钱包地址：" + config.Address)
+		log.Println("已加载钱包地址：" + config.Address)
 		// 使用逗号分割字符串
 		parts := strings.Split(config.Address, ",")
 
 		// 遍历并打印分割结果
 		for _, item := range parts {
-			log.Println(item, "读取节点列表...")
+			log.Println("----------------", item, "----------------")
+
 			if !getNodes(item) {
 				log.Println(item, "读取节点列表失败！")
 				scanner := bufio.NewScanner(os.Stdin)
 				scanner.Scan()
 				return
 			}
+			log.Println("----------------------------------------------------------------------------")
+
 		}
 	}
 
