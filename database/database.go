@@ -6,50 +6,119 @@ import (
 	"fmt"
 	"log"
 	"nexus_server/models"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type Database struct {
-	db *sql.DB
+	db      *sql.DB
+	writeMu sync.Mutex // 专门用于写操作的互斥锁
 }
 
 func NewDatabase() (*Database, error) {
-	db, err := sql.Open("sqlite3", "tasks.db?_busy_timeout=5000")
+	db, err := sql.Open("sqlite3", "file:tasks.db?_busy_timeout=10000&cache=shared&_fk=true")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+
+	// 设置连接池参数
+	db.SetMaxOpenConns(1) // SQLite 只支持一个连接
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(0)
+
 	// 启用WAL模式
 	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
 		return nil, fmt.Errorf("failed to set WAL mode: %v", err)
 	}
+
 	if err := createTables(db); err != nil {
 		return nil, err
 	}
 
+	database := &Database{db: db}
+
 	// 启动后台任务清理超时锁定的任务
 	go func() {
 		for {
-			if err := releaseExpiredLocks(db); err != nil {
-				log.Printf("Error releasing expired locks: %v", err)
-			}
+			database.safeExec(func(db *sql.DB) error {
+				return releaseExpiredLocks(db)
+			})
 			time.Sleep(1 * time.Minute)
-
 		}
 	}()
+
 	// 启动后台任务清理超时客户端
 	go func() {
 		for {
-			if err := releaseExpiredClient(db); err != nil {
-				log.Printf("Error releasing expired Client: %v", err)
-			}
+			database.safeExec(func(db *sql.DB) error {
+				return releaseExpiredClient(db)
+			})
 			time.Sleep(10 * time.Second)
-
 		}
 	}()
 
-	return &Database{db: db}, nil
+	return database, nil
+}
+
+// 安全执行函数
+func (d *Database) safeExec(fn func(db *sql.DB) error) error {
+	const maxRetries = 5
+	retryCount := 0
+
+	for {
+		d.writeMu.Lock()
+		err := fn(d.db)
+		d.writeMu.Unlock()
+
+		if err == nil {
+			return nil
+		}
+
+		if err.Error() != "database is locked" {
+			log.Printf("Database error: %v", err)
+			return err
+		}
+
+		retryCount++
+		if retryCount >= maxRetries {
+			err = fmt.Errorf("max retries reached for locked database")
+			log.Print(err)
+			return err
+		}
+
+		sleepDuration := time.Duration(retryCount*100) * time.Millisecond
+		time.Sleep(sleepDuration)
+	}
+}
+
+// 安全执行读操作
+func (d *Database) safeRead(fn func(db *sql.DB) error) error {
+	const maxRetries = 3
+	retryCount := 0
+
+	for {
+		err := fn(d.db)
+		if err == nil {
+			return nil
+		}
+
+		if err.Error() != "database is locked" {
+			log.Printf("Database error: %v", err)
+			return err
+		}
+
+		retryCount++
+		if retryCount >= maxRetries {
+			err = fmt.Errorf("max read retries reached for locked database")
+			log.Print(err)
+			return err
+		}
+
+		sleepDuration := time.Duration(retryCount*50) * time.Millisecond
+		time.Sleep(sleepDuration)
+	}
 }
 
 func (d *Database) Close() error {
@@ -90,67 +159,75 @@ func createTables(db *sql.DB) error {
 	return nil
 }
 
-// 计算所有统计数据
+// 优化读写
 func (d *Database) GetTaskStats() (*models.TaskStats, error) {
-	// 初始化结构体
 	stats := &models.TaskStats{}
 
-	// 任务总量统计
-	totalQuery := `SELECT COUNT(*) FROM tasks`
-	if err := d.db.QueryRow(totalQuery).Scan(&stats.TotalTasks); err != nil {
-		return nil, fmt.Errorf("total query failed: %w", err)
-	}
+	err := d.safeRead(func(db *sql.DB) error {
+		// 任务总量统计
+		totalQuery := `SELECT COUNT(*) FROM tasks`
+		if err := db.QueryRow(totalQuery).Scan(&stats.TotalTasks); err != nil {
+			return fmt.Errorf("total query failed: %w", err)
+		}
 
-	// 各状态任务计数（单次查询获取所有状态）
-	statusQuery := `
-		SELECT 
-			SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
-			SUM(CASE WHEN status = 'locked' THEN 1 ELSE 0 END) AS processing,
-			SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-			SUM(CASE WHEN status = 'completed' AND result = 'success' THEN 1 ELSE 0 END) AS successful
-		FROM tasks`
+		// 各状态任务计数
+		statusQuery := `
+			SELECT 
+				SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+				SUM(CASE WHEN status = 'locked' THEN 1 ELSE 0 END) AS processing,
+				SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
+				SUM(CASE WHEN status = 'completed' AND result = 'success' THEN 1 ELSE 0 END) AS successful
+			FROM tasks`
 
-	var pending, processing, completed, successful sql.NullInt64
-	if err := d.db.QueryRow(statusQuery).Scan(&pending, &processing, &completed, &successful); err != nil {
-		return nil, fmt.Errorf("status query failed: %w", err)
-	}
+		var pending, processing, completed, successful sql.NullInt64
+		if err := db.QueryRow(statusQuery).Scan(&pending, &processing, &completed, &successful); err != nil {
+			return fmt.Errorf("status query failed: %w", err)
+		}
 
-	stats.PendingTasks = pending.Int64
-	stats.ProcessingTasks = processing.Int64
-	stats.CompletedTasks = completed.Int64
-	stats.SuccessfulTasks = successful.Int64
-	stats.FailedTasks = completed.Int64 - successful.Int64
+		stats.PendingTasks = pending.Int64
+		stats.ProcessingTasks = processing.Int64
+		stats.CompletedTasks = completed.Int64
+		stats.SuccessfulTasks = successful.Int64
+		stats.FailedTasks = completed.Int64 - successful.Int64
 
-	// 处理速度（最近10分钟完成任务数/10）
-	rateQuery := `
-		SELECT COUNT(*) 
-		FROM tasks 
-		WHERE status = 'completed'
-		AND locked_at > ?`
+		// 处理速度
+		rateQuery := `
+			SELECT COUNT(*) 
+			FROM tasks 
+			WHERE status = 'completed'
+			AND locked_at > ?`
 
-	var recentCompletions int64
-	tenMinAgo := time.Now().Add(-10 * time.Minute).Unix()
-	if err := d.db.QueryRow(rateQuery, tenMinAgo).Scan(&recentCompletions); err != nil {
-		return nil, fmt.Errorf("rate query failed: %w", err)
-	}
-	stats.ProcessingRate = float64(recentCompletions) / 10.0
+		var recentCompletions int64
+		tenMinAgo := time.Now().Add(-10 * time.Minute).Unix()
+		if err := db.QueryRow(rateQuery, tenMinAgo).Scan(&recentCompletions); err != nil {
+			return fmt.Errorf("rate query failed: %w", err)
+		}
+		stats.ProcessingRate = float64(recentCompletions) / 10.0
 
-	// 平均处理时间（只计算completed状态）
-	avgTimeQuery := `
-		SELECT AVG(locked_at - created_at)
-		FROM tasks
-		WHERE status = 'completed'
-		AND locked_at > created_at` // 防止负值
+		// 平均处理时间
+		avgTimeQuery := `
+			SELECT AVG(locked_at - created_at)
+			FROM tasks
+			WHERE status = 'completed'
+			AND locked_at > created_at
+			AND locked_at > ?`
 
-	var avgTime sql.NullFloat64
-	if err := d.db.QueryRow(avgTimeQuery).Scan(&avgTime); err != nil {
-		return nil, fmt.Errorf("avg time query failed: %w", err)
-	}
+		var avgTime sql.NullFloat64
+		if err := db.QueryRow(avgTimeQuery, tenMinAgo).Scan(&avgTime); err != nil {
+			return fmt.Errorf("avg time query failed: %w", err)
+		}
 
-	if avgTime.Valid {
-		stats.AvgProcessTime = avgTime.Float64
-	} else {
-		stats.AvgProcessTime = 0 // 无完成任务时默认为0
+		if avgTime.Valid {
+			stats.AvgProcessTime = avgTime.Float64
+		} else {
+			stats.AvgProcessTime = 0
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
 	return stats, nil
@@ -199,6 +276,15 @@ func releaseExpiredLocks(db *sql.DB) error {
 		log.Println("已重置任务状态，数量：", c)
 	}
 
+	timeout = time.Now().Add(-12 * time.Hour).Unix()
+	res, err := db.Exec("DELETE FROM tasks where status = 'success' And locked_at < ?", timeout)
+	if err != nil {
+		return fmt.Errorf("failed to DELETE expired : %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return nil
+	}
+
 	return nil
 }
 
@@ -217,108 +303,71 @@ func releaseExpiredClient(db *sql.DB) error {
 
 	return nil
 }
+
+// 优化后
 func (d *Database) CreateTask(task models.TaskData) error {
-	// 确保任务创建时间为当前时间
-	task.CreatedAt = time.Now()
+	return d.safeExec(func(db *sql.DB) error {
+		task.CreatedAt = time.Now()
 
-	stmt, err := d.db.Prepare(`INSERT INTO tasks(
-		program_id, public_inputs, task_id, sign_key, 
-		status, result, credits, locked_at, created_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("prepare statement failed: %w", err)
-	}
-	defer stmt.Close()
+		stmt, err := db.Prepare(`INSERT INTO tasks(
+			program_id, public_inputs, task_id, sign_key, 
+			status, result, credits, locked_at, created_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		if err != nil {
+			return fmt.Errorf("prepare statement failed: %w", err)
+		}
+		defer stmt.Close()
 
-	_, err = stmt.Exec(
-		task.ProgramID, task.PublicInputs, task.TaskID, task.SignKey,
-		models.TaskPending, nil, 0, nil, task.CreatedAt.Unix(),
-	)
-	return err
+		_, err = stmt.Exec(
+			task.ProgramID, task.PublicInputs, task.TaskID, task.SignKey,
+			models.TaskPending, nil, 0, nil, task.CreatedAt.Unix(),
+		)
+		return err
+	})
 }
 
+// 优化后
 func (d *Database) GetTaskCount(status string) int {
 	var count int
-	err := d.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE status = ?", status).Scan(&count)
+
+	// 直接返回错误
+	err := d.safeRead(func(db *sql.DB) error {
+		return db.QueryRow("SELECT COUNT(*) FROM tasks WHERE status = ?", status).Scan(&count)
+	})
+
 	if err != nil {
-		log.Fatalf("Failed to execute query: %v", err)
 		return -1
 	}
+
 	return count
 }
 
-func (d *Database) GetTask(taskID string) (*models.TaskData, error) {
-	stmt, err := d.db.Prepare("SELECT * FROM tasks WHERE task_id = ?")
-	if err != nil {
-		return nil, fmt.Errorf("prepare statement failed: %w", err)
-	}
-	defer stmt.Close()
-
-	task, err := scanTask(stmt.QueryRow(taskID))
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, sql.ErrNoRows
-		}
-		return nil, err
-	}
-	return task, nil
-}
-
-func (d *Database) UpdateTask(task models.TaskData) error {
-	stmt, err := d.db.Prepare(`UPDATE tasks SET 
-		program_id = ?, public_inputs = ?, sign_key = ?, 
-		status = ?, result = ?, credits = ?, locked_at = ?
-	WHERE task_id = ?`)
-	if err != nil {
-		return fmt.Errorf("prepare statement failed: %w", err)
-	}
-	defer stmt.Close()
-
-	res, err := stmt.Exec(
-		task.ProgramID, task.PublicInputs, task.SignKey,
-		task.Status, task.Result.String, task.Credits, task.LockedAt.Time.Unix(),
-		task.TaskID,
-	)
-	if err != nil {
-		return err
-	}
-
-	if rows, _ := res.RowsAffected(); rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
-}
-
+// 优化后
 func (d *Database) DeleteTask() error {
-	res, err := d.db.Exec("DELETE FROM tasks")
-	if err != nil {
-		return err
-	}
-	if rows, _ := res.RowsAffected(); rows == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return d.safeExec(func(db *sql.DB) error {
+		res, err := db.Exec("DELETE FROM tasks where status = 'success'")
+		if err != nil {
+			return err
+		}
+		if rows, _ := res.RowsAffected(); rows == 0 {
+			return nil
+		}
+		return nil
+	})
 }
 
-func (d *Database) GetAllTasks() ([]models.TaskData, error) {
-	rows, err := d.db.Query("SELECT * FROM tasks")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	return scanTasks(rows)
-}
-
-// 提取一个未处理的任务
+// 提取一个未处理的任务 优化后
 func (d *Database) PickAvailableTask() (*models.TaskData, error) {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction failed: %w", err)
 	}
 	defer tx.Rollback()
 
-	// 获取最早创建的待处理任务(一分钟前的任务)
+	// 获取最早创建的待处理任务
 	row := tx.QueryRow(`
 		SELECT * 
 		FROM tasks 
@@ -330,7 +379,7 @@ func (d *Database) PickAvailableTask() (*models.TaskData, error) {
 	task, err := scanTask(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil // 没有待处理任务
+			return nil, nil
 		}
 		return nil, err
 	}
@@ -361,8 +410,11 @@ func (d *Database) PickAvailableTask() (*models.TaskData, error) {
 	return task, nil
 }
 
-// 提交任务结果
+// 提交任务结果 优化后
 func (d *Database) SubmitTaskResult(submission models.TaskResultSubmission) error {
+	d.writeMu.Lock()
+	defer d.writeMu.Unlock()
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin transaction failed: %w", err)
@@ -392,7 +444,6 @@ func (d *Database) SubmitTaskResult(submission models.TaskResultSubmission) erro
 		return fmt.Errorf("task is not locked: current status %s", status)
 	}
 
-	// 验证锁定时间是否超时
 	if !lockedAt.Valid {
 		return fmt.Errorf("task lock is invalid")
 	}
@@ -460,100 +511,69 @@ func scanTask(row *sql.Row) (*models.TaskData, error) {
 	return &task, nil
 }
 
-// 辅助函数：扫描多个任务
-func scanTasks(rows *sql.Rows) ([]models.TaskData, error) {
-	var tasks []models.TaskData
-	for rows.Next() {
-		var task models.TaskData
-		var result sql.NullString
-		var credits sql.NullInt64
-		var lockedAt sql.NullInt64
-		var createdAt int64
-
-		if err := rows.Scan(
-			&task.ProgramID,
-			&task.PublicInputs,
-			&task.TaskID,
-			&task.SignKey,
-			&task.Status,
-			&result,
-			&credits,
-			&lockedAt,
-			&createdAt,
-		); err != nil {
-			return nil, err
-		}
-
-		// 处理可能为 NULL 的字段
-		task.Result = sql.NullString{String: result.String, Valid: result.Valid}
-		task.Credits = int(credits.Int64)
-
-		if lockedAt.Valid {
-			task.LockedAt = sql.NullTime{Time: time.Unix(lockedAt.Int64, 0), Valid: true}
-		}
-
-		task.CreatedAt = time.Unix(createdAt, 0)
-
-		tasks = append(tasks, task)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return tasks, nil
-}
-
+// 优化后
 func (d *Database) UpsertClient(client models.Client) error {
-	_, err := d.db.Exec(`
-		INSERT OR REPLACE INTO client 
-		(client_uuid, client_key, client_ip, heart_time, cpu, memory)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		client.UUID, client.Key, client.IP, client.HeartTime, client.CPU, client.Memory)
-	return err
+	return d.safeExec(func(db *sql.DB) error {
+		_, err := db.Exec(`
+			INSERT OR REPLACE INTO client 
+			(client_uuid, client_key, client_ip, heart_time, cpu, memory)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			client.UUID, client.Key, client.IP, client.HeartTime, client.CPU, client.Memory)
+		return err
+	})
 }
 
+// 优化后
 func (d *Database) GetClientStates() ([]models.ClientState, error) {
-	query := `
-        SELECT 
-            main.client_ip,
-            main.client_key,
-            COUNT(DISTINCT sub.client_uuid) AS client_count,
-            MAX(main.heart_time) AS last_updated,
-            (SELECT cpu FROM client 
-             WHERE client_key = main.client_key 
-             ORDER BY heart_time DESC 
-             LIMIT 1) AS cpu,
-            (SELECT memory FROM client 
-             WHERE client_key = main.client_key 
-             ORDER BY heart_time DESC 
-             LIMIT 1) AS memory
-        FROM client AS main
-        INNER JOIN client AS sub ON main.client_key = sub.client_key
-        GROUP BY main.client_key;
-    `
+	var states []models.ClientState
 
-	rows, err := d.db.Query(query)
+	err := d.safeRead(func(db *sql.DB) error {
+		query := `
+			SELECT 
+				main.client_ip,
+				main.client_key,
+				COUNT(DISTINCT sub.client_uuid) AS client_count,
+				MAX(main.heart_time) AS last_updated,
+				(SELECT cpu FROM client 
+				 WHERE client_key = main.client_key 
+				 ORDER BY heart_time DESC 
+				 LIMIT 1) AS cpu,
+				(SELECT memory FROM client 
+				 WHERE client_key = main.client_key 
+				 ORDER BY heart_time DESC 
+				 LIMIT 1) AS memory
+			FROM client AS main
+			INNER JOIN client AS sub ON main.client_key = sub.client_key
+			GROUP BY main.client_key;
+		`
+
+		rows, err := db.Query(query)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var state models.ClientState
+			err := rows.Scan(
+				&state.ClientIp,
+				&state.ClientKey,
+				&state.ClientCount,
+				&state.LastUpdated,
+				&state.CPU,
+				&state.Memory,
+			)
+			if err != nil {
+				return err
+			}
+			states = append(states, state)
+		}
+		return rows.Err()
+	})
+
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var states []models.ClientState
-	for rows.Next() {
-		var state models.ClientState
-		err := rows.Scan(
-			&state.ClientIp,
-			&state.ClientKey,
-			&state.ClientCount,
-			&state.LastUpdated,
-			&state.CPU,
-			&state.Memory,
-		)
-		if err != nil {
-			return nil, err
-		}
-		states = append(states, state)
-	}
 	return states, nil
 }

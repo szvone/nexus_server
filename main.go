@@ -64,22 +64,31 @@ func getNodes(address string) bool {
 	r := c.R()
 	resp, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
 	if err != nil {
-		fmt.Println(address, "读取节点失败：{}", err)
+		fmt.Println(address, "读取节点失败：", err)
 		return false
 	}
 	res := &gen.UserResponse{}
-
-	proto.Unmarshal(resp.Bytes(), res)
+	bin := resp.Bytes()
+	err = proto.Unmarshal(bin, res)
+	if err != nil {
+		fmt.Println(address, "读取节点失败：", string(bin))
+		return false
+	}
 	nodes.StoreNodes(res)
 	count := len(res.Nodes)
 	if len(res.Nodes) == 50 {
 		resp2, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 		if err != nil {
-			fmt.Println(address, "读取节点失败：{}", err)
+			fmt.Println(address, "读取节点失败：", err)
 			return false
 		}
 		res2 := &gen.UserResponse{}
-		proto.Unmarshal(resp2.Bytes(), res2)
+		bin = resp2.Bytes()
+		err = proto.Unmarshal(bin, res2)
+		if err != nil {
+			fmt.Println(address, "读取节点失败：", string(bin))
+			return false
+		}
 		nodes.StoreNodes(res2)
 		count += len(res2.Nodes)
 	}
@@ -411,11 +420,8 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 	// 任务管理API
 	taskGroup := router.Group("/tasks")
 	{
-		taskGroup.POST("", handler.CreateTask)
-		taskGroup.GET("/:task_id", handler.GetTask)
-		taskGroup.PUT("/:task_id", handler.UpdateTask)
+		// taskGroup.POST("", handler.CreateTask)
 		taskGroup.DELETE("", handler.DeleteTask)
-		taskGroup.GET("", handler.ListTasks)
 
 		// 新增API端点
 		taskGroup.GET("/getTaskStats", handler.GetTaskStats) // 获取任务状态

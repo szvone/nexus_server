@@ -43,47 +43,6 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	c.JSON(http.StatusCreated, task)
 }
 
-func (h *TaskHandler) GetTask(c *gin.Context) {
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
-		return
-	}
-
-	task, err := h.db.GetTask(taskID)
-	if handleDBError(c, err) {
-		return
-	}
-
-	c.JSON(http.StatusOK, task)
-}
-
-func (h *TaskHandler) UpdateTask(c *gin.Context) {
-	taskID := c.Param("task_id")
-	if taskID == "" {
-		sendErrorResponse(c, http.StatusBadRequest, "Task ID is required")
-		return
-	}
-
-	var task models.TaskData
-	if err := c.ShouldBindJSON(&task); err != nil {
-		sendErrorResponse(c, http.StatusBadRequest, "Invalid JSON: "+err.Error())
-		return
-	}
-
-	if task.TaskID != "" && task.TaskID != taskID {
-		sendErrorResponse(c, http.StatusBadRequest, "Task ID mismatch")
-		return
-	}
-
-	task.TaskID = taskID
-	if err := h.db.UpdateTask(task); handleDBError(c, err) {
-		return
-	}
-
-	c.JSON(http.StatusOK, task)
-}
-
 func (h *TaskHandler) DeleteTask(c *gin.Context) {
 
 	if err := h.db.DeleteTask(); handleDBError(c, err) {
@@ -91,19 +50,6 @@ func (h *TaskHandler) DeleteTask(c *gin.Context) {
 	}
 
 	c.Status(http.StatusNoContent)
-}
-
-func (h *TaskHandler) ListTasks(c *gin.Context) {
-	tasks, err := h.db.GetAllTasks()
-	if handleDBError(c, err) {
-		return
-	}
-
-	if tasks == nil {
-		tasks = []models.TaskData{}
-	}
-
-	c.JSON(http.StatusOK, tasks)
 }
 
 // 提取一个新任务

@@ -78,7 +78,7 @@
             </button>
             <button id="clear-db-btn"
                 class="bg-danger hover:bg-danger/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
-                清空任务数据
+                清理任务数据
             </button>
             <button id="go-twitter"
                 class="bg-primary hover:bg-primary/90 text-white font-medium py-3 px-6 rounded-lg transition-all-300 flex items-center shadow-md hover:shadow-lg transform hover:-translate-y-0.5">
@@ -105,9 +105,12 @@
                     </div>
                 </div>
                 <div class="flex items-center text-sm">
-                    <span id="processed-percentage" class="text-secondary font-medium">0</span>
-                    <span class="text-gray-500 ml-1">已完成</span>
+                    <div class="w-full bg-gray-200 rounded-full h-2 mr-2">
+                        <div id="pending-progress" class="bg-primary h-2 rounded-full" style="width: 0%"></div>
+                    </div>
+                    <span id="pending-percentage" class="text-primary font-medium">0%</span>
                 </div>
+                
             </div>
 
             <div
@@ -122,10 +125,8 @@
                     </div>
                 </div>
                 <div class="flex items-center text-sm">
-                    <div class="w-full bg-gray-200 rounded-full h-2 mr-2">
-                        <div id="pending-progress" class="bg-warning h-2 rounded-full" style="width: 0%"></div>
-                    </div>
-                    <span id="pending-percentage" class="text-warning font-medium">0%</span>
+                    <span id="processed-percentage" class="text-secondary font-medium">0</span>
+                    <span class="text-gray-500 ml-1">已处理</span>
                 </div>
             </div>
 
@@ -210,7 +211,7 @@
                     </div>
                 </div>
                 <div class="flex items-center text-sm">
-                    <span class="text-primary font-medium">秒/任务</span>
+                    <span class="text-primary font-medium">秒/任务（近十分钟）</span>
                 </div>
             </div>
 
@@ -329,7 +330,7 @@
             </div>
         </div>
 
-        <!-- 清空数据库确认模态框 -->
+        <!-- 清理数据库确认模态框 -->
         <div id="clear-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
             <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6 transform transition-all-300 scale-95 opacity-0"
                 id="clear-modal-content">
@@ -337,14 +338,14 @@
                     <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-danger/10 mb-4">
                         <i class="fa fa-exclamation-triangle text-danger text-2xl"></i>
                     </div>
-                    <h3 class="text-xl font-bold text-dark">清空任务数据库</h3>
-                    <p class="text-gray-600 mt-2">此操作将删除所有任务数据，包括已处理和待处理的任务。此操作不可撤销。</p>
+                    <h3 class="text-xl font-bold text-dark">清理任务数据库</h3>
+                    <p class="text-gray-600 mt-2">此操作将删除已处理的任务。此操作不可撤销。建议定时清理任务数据库。</p>
                 </div>
                 <div class="flex justify-center gap-3">
                     <button id="cancel-clear"
                         class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">取消</button>
                     <button id="confirm-clear"
-                        class="px-6 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 transition-colors">确认清空</button>
+                        class="px-6 py-2 bg-danger text-white rounded-lg hover:bg-danger/90 transition-colors">确认清理</button>
                 </div>
             </div>
         </div>
@@ -578,14 +579,16 @@
 
             // 计算百分比
             const processedPercentage = data.successTasks + data.failedTasks;
-            const pendingPercentage = data.totalTasks > 0 ? Math.round((data.pendingTasks / data.totalTasks) * 100) : 0;
+            const pendingPercentage = data.pendingTasks > 0 ? Math.round((data.processedTasks / data.pendingTasks) * 100) : 0;
             const successPercentage = (data.successTasks + data.failedTasks) > 0 ? Math.round((data.successTasks / (data.successTasks + data.failedTasks)) * 100) : 0;
             const failedPercentage = (data.successTasks + data.failedTasks) > 0 ? Math.round((data.failedTasks / (data.successTasks + data.failedTasks)) * 100) : 0;
 
             // 更新百分比显示
             document.getElementById('processed-percentage').textContent = `${processedPercentage}`;
+
             document.getElementById('pending-percentage').textContent = `${pendingPercentage}%`;
             document.getElementById('pending-progress').style.width = `${pendingPercentage}%`;
+
             document.getElementById('success-percentage').textContent = `${successPercentage}%`;
             document.getElementById('failed-percentage').textContent = `${failedPercentage}%`;
         }
@@ -615,7 +618,7 @@
             }
         }
 
-        // 清空任务数据库
+        // 清理任务数据库
         async function clearTaskDatabase() {
             try {
 
@@ -627,13 +630,13 @@
                     throw new Error(`HTTP错误，状态码: ${response.status}`);
                 }
 
-                showToast('任务数据库已清空');
+                showToast('任务数据库已清理');
                 // 刷新数据
                 fetchData();
                 return true;
             } catch (error) {
-                console.error('清空数据库失败:', error);
-                showToast('清空数据库失败', false);
+                console.error('清理数据库失败:', error);
+                showToast('清理数据库失败', false);
                 return false;
             }
         }
@@ -828,23 +831,23 @@
                 const success = await resetServerParams(formData);
                 if (success) {
                     hideModal('reset-modal', 'modal-content');
-                    // 清空表单
+                    // 清理表单
                     document.getElementById('reset-form').reset();
                 }
             });
 
-            // 清空数据库按钮
+            // 清理数据库按钮
             document.getElementById('clear-db-btn').addEventListener('click', () => {
                 showModal('clear-modal', 'clear-modal-content');
 
             });
 
-            // 取消清空
+            // 取消清理
             document.getElementById('cancel-clear').addEventListener('click', () => {
                 hideModal('clear-modal', 'clear-modal-content');
             });
 
-            // 确认清空
+            // 确认清理
             document.getElementById('confirm-clear').addEventListener('click', async () => {
                 const success = await clearTaskDatabase();
                 if (success) {
