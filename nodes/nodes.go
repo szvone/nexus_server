@@ -63,6 +63,49 @@ func StoreNodes(resp *gen.UserResponse) {
 	copy(updatedList, newNodeIDs)
 	nodeList.Store(&updatedList)
 }
+func StoreNodesUseList(list []*gen.Node) {
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 创建新的节点ID列表（保留之前的有效节点）
+	newNodeIDs := []string{}
+	if existingList := nodeList.Load(); existingList != nil {
+		// 保留现有的节点ID列表
+		newNodeIDs = *existingList
+	}
+
+	// 处理当前响应中的节点
+	for _, node := range list {
+
+		nodeID := node.GetNodeId()
+
+		// 存储/更新节点
+		nodeCopy := &gen.Node{
+			NodeId:   node.GetNodeId(),
+			NodeType: node.GetNodeType(),
+			// 添加其他必要字段...
+		}
+		globalNodes.Store(nodeID, nodeCopy)
+
+		// 如果节点ID不在列表中则添加
+		found := false
+		for _, id := range newNodeIDs {
+			if id == nodeID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			newNodeIDs = append(newNodeIDs, nodeID)
+		}
+	}
+
+	// 原子方式更新节点ID列表
+	updatedList := make([]string, len(newNodeIDs))
+	copy(updatedList, newNodeIDs)
+	nodeList.Store(&updatedList)
+}
 
 // GetNextNode 安全地循环获取下一个节点（跳过无效节点）
 func GetNextNode() *gen.Node {
