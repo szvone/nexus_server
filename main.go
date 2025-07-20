@@ -292,8 +292,14 @@ func worker(ctx context.Context, No string) {
 			r.SetBody(GetProofTaskRequest(node.NodeId, node_key, int(node.NodeType)))
 			resp, err := r.Send("POST", "https://beta.orchestrator.nexus.xyz/v3/tasks")
 			if err != nil {
-				log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", err)
+
+				if resp.StatusCode == 502 {
+					log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：服务器繁忙！")
+				} else {
+					log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", err)
+				}
 				continue
+
 			}
 			bin := resp.Bytes()
 
@@ -308,7 +314,7 @@ func worker(ctx context.Context, No string) {
 
 				continue
 			} else if strings.Contains(string(bin), "Rate limit exceeded for node") {
-				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量、减少配置中的worker和queue数。")
+				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量，减少任务读取线程，队列长度。")
 				continue
 			}
 			task := &gen.GetProofTaskResponse{}
