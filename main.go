@@ -398,10 +398,13 @@ func main() {
 		return
 	}
 	defer db.Close()
-	// 循环获取节点
-	for i := 1; i <= config.Worker; i++ {
-		go worker(ctx, strconv.Itoa(i)) // 每行启动一个goroutine
+	if config.Address != "" {
+		// 循环获取节点
+		for i := 1; i <= config.Worker; i++ {
+			go worker(ctx, strconv.Itoa(i)) // 每行启动一个goroutine
+		}
 	}
+
 	go func() {
 		// 创建请求处理器
 		taskHandler := handlers.NewTaskHandler(db)
