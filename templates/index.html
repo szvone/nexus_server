@@ -110,7 +110,7 @@
                     </div>
                     <span id="pending-percentage" class="text-primary font-medium">0%</span>
                 </div>
-                
+
             </div>
 
             <div
@@ -277,10 +277,8 @@
                 <canvas id="taskChart"></canvas>
             </div>
         </div>
-
-        <!-- 重置服务器参数模态框 -->
         <div id="reset-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
-            <div class="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 transform transition-all-300 scale-95 opacity-0"
+            <div class="bg-white rounded-xl shadow-xl w-full max-w-5xl p-6 transform transition-all-300 scale-95 opacity-0"
                 id="modal-content">
                 <div class="flex justify-between items-center mb-6">
                     <h3 class="text-xl font-bold text-dark">设置运行参数</h3>
@@ -288,38 +286,74 @@
                         <i class="fa fa-times text-xl"></i>
                     </button>
                 </div>
-                <form id="reset-form" class="space-y-4">
-                    <div>
-                        <label for="work-address" class="block text-sm font-medium text-gray-700 mb-1">程序工作地址</label>
-                        <input type="text" id="work-address"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
-                            placeholder="内网写内网IP，公网写公网IP，本机写127.0.0.1">
-                    </div>
-                    <div>
-                        <label for="work-port" class="block text-sm font-medium text-gray-700 mb-1">程序工作端口</label>
-                        <input type="number" id="work-port"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
-                            placeholder="输入端口号（8000-9999）" min="8000" max="9999">
-                    </div>
-                    <div>
-                        <label for="thread-count" class="block text-sm font-medium text-gray-700 mb-1">任务读取线程</label>
-                        <input type="number" id="thread-count"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
-                            placeholder="多开计算程序数" min="1">
-                    </div>
-                    <div>
-                        <label for="queue-size" class="block text-sm font-medium text-gray-700 mb-1">任务队列长度</label>
-                        <input type="number" id="queue-size"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
-                            placeholder="多开计算程序数 x 3" min="1">
-                    </div>
-                    <div>
-                        <label for="address" class="block text-sm font-medium text-gray-700 mb-1">任务钱包地址</label>
-                        <textarea id="address"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
-                            placeholder="0x钱包地址，一行一个" rows="5"></textarea>
+                <form id="reset-form" class="space-y-6">
+                    <!-- 左右布局容器 -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <!-- 左侧表单区域 -->
+                        <div class="space-y-5">
+                            <div>
+                                <label for="work-address"
+                                    class="block text-sm font-medium text-gray-700 mb-1">程序工作地址</label>
+                                <input type="text" id="work-address"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="内网写内网IP，公网写公网IP，本机写127.0.0.1">
+                            </div>
+                            <div>
+                                <label for="work-port"
+                                    class="block text-sm font-medium text-gray-700 mb-1">程序工作端口</label>
+                                <input type="number" id="work-port"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="输入端口号（8000-9999）" min="8000" max="9999">
+                            </div>
+                            <div>
+                                <label for="thread-count"
+                                    class="block text-sm font-medium text-gray-700 mb-1">任务读取线程</label>
+                                <input type="number" id="thread-count"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="多开计算程序数" min="1">
+                            </div>
+                            <div>
+                                <label for="queue-size"
+                                    class="block text-sm font-medium text-gray-700 mb-1">任务队列长度</label>
+                                <input type="number" id="queue-size"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="多开计算程序数 x 3" min="1">
+                            </div>
+                        </div>
+
+                        <!-- 右侧表单区域 -->
+                        <div class="space-y-5">
+                            <div>
+                                <label for="task-interval"
+                                    class="block text-sm font-medium text-gray-700 mb-1">任务分配间隔</label>
+                                <input type="number" id="task-interval"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="任务入库之后间隔多久分配计算，单位秒" min="1">
+                            </div>
+                            <div>
+                                <label for="node-interval"
+                                    class="block text-sm font-medium text-gray-700 mb-1">节点使用间隔</label>
+                                <input type="number" id="node-interval"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="节点每次读取任务的时间间隔，单位秒" min="1">
+                            </div>
+                            <div>
+                                <label for="node-frequently"
+                                    class="block text-sm font-medium text-gray-700 mb-1">频繁等待间隔</label>
+                                <input type="number" id="node-frequently"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="读取任务频繁的等待时间间隔，单位秒" min="1">
+                            </div>
+                            <div>
+                                <label for="address" class="block text-sm font-medium text-gray-700 mb-1">任务钱包地址</label>
+                                <textarea id="address"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-all-300"
+                                    placeholder="0x钱包地址，一行一个" rows="4"></textarea>
+                            </div>
+                        </div>
                     </div>
 
+                    <!-- 底部按钮区域 -->
                     <div class="flex justify-end gap-3 mt-6">
                         <button type="button" id="cancel-reset"
                             class="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors">取消</button>
@@ -554,6 +588,9 @@
                 document.getElementById('queue-size').value = json.Queue;
                 document.getElementById('address').innerHTML = json.Address.split(',').join("\n");
                 document.getElementById('work-address').value = json.Host;
+                document.getElementById('node-interval').value = json.Interval1;
+                document.getElementById('node-frequently').value = json.Frequently;
+                document.getElementById('task-interval').value = json.Interval2;
 
             } catch (error) {
                 console.error('获取数据失败:', error);
@@ -812,17 +849,24 @@
                 const threadCount = document.getElementById('thread-count').value;
                 const queueSize = document.getElementById('queue-size').value;
                 const address = document.getElementById('address').value;
+                const Frequently = document.getElementById('node-frequently').value;
+                const node_interval = document.getElementById('node-interval').value;
+                const task_interval = document.getElementById('task-interval').value;
 
                 const formData = {
                     Host: workAddress,
                     Port: parseInt(workPort),
                     Worker: parseInt(threadCount),
                     Queue: parseInt(queueSize),
-                    Address: formatAddress(address)
+                    Address: formatAddress(address),
+                    Frequently: parseInt(Frequently),
+                    interval1: parseInt(node_interval),
+                    interval2: parseInt(task_interval),
+
                 };
 
                 // 验证表单
-                if (!workAddress || !threadCount || !workPort || !queueSize || !address) {
+                if (!workAddress || !threadCount || !workPort || !queueSize || !address || !Frequently || !node_interval || !task_interval) {
                     showToast('请填写所有字段', false);
                     return;
                 }

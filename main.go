@@ -247,6 +247,7 @@ func CreateTask(programID, publicInputs, taskID, signKey string) error {
 		PublicInputs: publicInputs,
 		TaskID:       taskID,
 		SignKey:      signKey,
+		CreatedAt:    time.Now().Add(time.Duration(config.Interval2) * time.Second),
 	}
 
 	if err := db.CreateTask(task); err != nil {
@@ -285,7 +286,12 @@ func worker(ctx context.Context, No string) {
 				time.Sleep(10 * time.Second)
 				continue
 			}
-			node := nodes.GetNextNode()
+			node := nodes.GetNextNode(config.Interval1)
+			if node == nil {
+				log.Println("线程" + No + " 无可用节点，3秒后重试！")
+				time.Sleep(3 * time.Second)
+				continue
+			}
 			node_key := GenKey()
 			log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务...")
 			r := c.R()
@@ -306,7 +312,7 @@ func worker(ctx context.Context, No string) {
 			if strings.Contains(string(bin), "Node has too many tasks") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
 				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点任务过多，该节点已无法使用，可进行删除，删除后需重启服务端。")
-
+				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
 				continue
 			} else if strings.Contains(string(bin), "Node not found") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
@@ -314,7 +320,8 @@ func worker(ctx context.Context, No string) {
 
 				continue
 			} else if strings.Contains(string(bin), "Rate limit exceeded for node") {
-				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量，减少任务读取线程，队列长度。")
+				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量，减少任务读取线程，队列长度，调整节点使用间隔、频繁等待间隔。")
+				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
 				continue
 			}
 			task := &gen.GetProofTaskResponse{}
@@ -332,11 +339,14 @@ func worker(ctx context.Context, No string) {
 
 // Config 定义配置结构
 type Config struct {
-	Host    string `yaml:"host"`
-	Address string `yaml:"address"`
-	Port    int    `yaml:"port"`
-	Worker  int    `yaml:"worker"`
-	Queue   int    `yaml:"queue"`
+	Host       string `yaml:"host"`
+	Address    string `yaml:"address"`
+	Port       int    `yaml:"port"`
+	Worker     int    `yaml:"worker"`
+	Queue      int    `yaml:"queue"`
+	Interval1  int    `yaml:"interval1"`
+	Frequently int    `yaml:"frequently"`
+	Interval2  int    `yaml:"interval2"`
 }
 
 var config Config
@@ -349,11 +359,14 @@ func main() {
 		// scanner := bufio.NewScanner(os.Stdin)
 		// scanner.Scan()
 		config = Config{
-			Host:    "127.0.0.1",
-			Address: "",
-			Port:    8182,
-			Worker:  5,
-			Queue:   20,
+			Host:       "127.0.0.1",
+			Address:    "",
+			Port:       8182,
+			Worker:     5,
+			Queue:      20,
+			Interval1:  30,
+			Frequently: 30,
+			Interval2:  30,
 		}
 
 	} else {
@@ -361,15 +374,27 @@ func main() {
 		if err != nil {
 			log.Println("无配置文件或配置文件错误，已使用默认配置，请前往控制面板设置钱包地址！")
 			config = Config{
-				Host:    "127.0.0.1",
-				Address: "",
-				Port:    8182,
-				Worker:  5,
-				Queue:   20,
+				Host:       "127.0.0.1",
+				Address:    "",
+				Port:       8182,
+				Worker:     5,
+				Queue:      20,
+				Interval1:  30,
+				Frequently: 30,
+				Interval2:  30,
 			}
 		}
 	}
 
+	if config.Frequently == 0 {
+		config.Frequently = 30
+	}
+	if config.Interval1 == 0 {
+		config.Interval1 = 30
+	}
+	if config.Interval2 == 0 {
+		config.Interval2 = 30
+	}
 	// 创建上下文用于关闭所有goroutine
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -525,8 +550,10 @@ func setupRouter(handler *handlers.TaskHandler) *gin.Engine {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "写入文件失败: " + err.Error()})
 			return
 		}
-		log.Println("配置文件已更新，请重启服务端！")
-
+		log.Println("配置文件已更新，修改间隔已生效，修改其他配置请重启服务端！")
+		config.Frequently = _config.Frequently
+		config.Interval1 = _config.Interval1
+		config.Interval2 = _config.Interval2
 		c.JSON(http.StatusOK, config)
 	})
 

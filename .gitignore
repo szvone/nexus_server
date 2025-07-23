@@ -2,4 +2,5 @@ tasks.db
 tasks.db-shm
 tasks.db-wal
 nexus_server.txt
+nexus_client.txt
 *.txt

@@ -3,3 +3,6 @@ address: 0x8b560406F651f6f6CF0835C0eDA2Df487a596337,0xAE436603E7149262BB321B9F98
 port: 8182
 worker: 5
 queue: 20
+interval1: 31
+frequently: 11
+interval2: 31

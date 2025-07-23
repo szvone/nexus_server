@@ -307,7 +307,6 @@ func releaseExpiredClient(db *sql.DB) error {
 // 优化后
 func (d *Database) CreateTask(task models.TaskData) error {
 	return d.safeExec(func(db *sql.DB) error {
-		task.CreatedAt = time.Now()
 
 		stmt, err := db.Prepare(`INSERT INTO tasks(
 			program_id, public_inputs, task_id, sign_key, 
@@ -374,7 +373,7 @@ func (d *Database) PickAvailableTask() (*models.TaskData, error) {
 		WHERE status = 'pending' and created_at <= ?
 		ORDER BY created_at ASC 
 		LIMIT 1
-	`, time.Now().Add(-30*time.Second).Unix())
+	`, time.Now().Unix())
 
 	task, err := scanTask(row)
 	if err != nil {
