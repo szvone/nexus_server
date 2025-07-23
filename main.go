@@ -309,17 +309,17 @@ func worker(ctx context.Context, No string) {
 			}
 			bin := resp.Bytes()
 
-			if strings.Contains(string(bin), "Node has too many tasks") {
+			if strings.Contains(string(bin), "has too many tasks") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
 				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点任务过多，该节点已无法使用，可进行删除，删除后需重启服务端。")
 				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
 				continue
-			} else if strings.Contains(string(bin), "Node not found") {
+			} else if strings.Contains(string(bin), "not found") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
 				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点未找到，如果进行了节点删除和添加，需要重启服务端。")
 
 				continue
-			} else if strings.Contains(string(bin), "Rate limit exceeded for node") {
+			} else if strings.Contains(string(bin), "rate limit exceeded") {
 				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量，减少任务读取线程，队列长度，调整节点使用间隔、频繁等待间隔。")
 				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
 				continue
