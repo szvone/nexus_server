@@ -206,6 +206,8 @@ jobs:
             - Build commit: ${{ github.sha }}
             - Built with Go ${{ env.GO_VERSION }}
             
+            如有帮助，欢迎打赏，打赏地址：0x56affcaaa4703a9e650df7588ff8a10a08cc7b55
+
             ## Download Assets
             
             | Platform        | File                              |

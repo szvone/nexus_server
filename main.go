@@ -329,8 +329,8 @@ func worker(ctx context.Context, No string) {
 	c.SetCommonHeader("Content-Type", "application/octet-stream")
 	// c.SetCommonHeader("Origin", "https://app.nexus.xyz")
 	// c.SetCommonHeader("Referer", "https://app.nexus.xyz/")
-	c.SetCommonHeader("User-Agent", "nexus-cli/0.10.8")
-	c.SetCommonHeader("X-Build-Timestamp", "1755272024349")
+	c.SetCommonHeader("User-Agent", "nexus-cli/0.10.9")
+	c.SetCommonHeader("X-Build-Timestamp", "1755639721739")
 	c.SetTimeout(time.Duration(120) * time.Second)
 
 	// c.SetProxyURL("http://127.0.0.1:2025")
