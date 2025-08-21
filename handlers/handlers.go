@@ -109,7 +109,6 @@ func (h *TaskHandler) SubmitResult(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Task %s completed successfully", submission.TaskID),
-		"credits": submission.Credits,
 	})
 }
 

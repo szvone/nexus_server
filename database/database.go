@@ -18,7 +18,7 @@ type Database struct {
 }
 
 func NewDatabase() (*Database, error) {
-	db, err := sql.Open("sqlite3", "file:tasks.db?_busy_timeout=10000&cache=shared&_fk=true")
+	db, err := sql.Open("sqlite3", "file:tasksV2.db?_busy_timeout=10000&cache=shared&_fk=true")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -27,7 +27,10 @@ func NewDatabase() (*Database, error) {
 	db.SetMaxOpenConns(1) // SQLite 只支持一个连接
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
-
+	// 开启外键支持
+	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+		return nil, err
+	}
 	// 启用WAL模式
 	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
 		return nil, fmt.Errorf("failed to set WAL mode: %v", err)
@@ -134,7 +137,7 @@ func createTables(db *sql.DB) error {
 		sign_key TEXT NOT NULL,
 		status VARCHAR(10) NOT NULL DEFAULT 'pending',
 		result TEXT DEFAULT NULL,
-		credits INTEGER DEFAULT 0,
+		task_type INTEGER DEFAULT 0,
 		locked_at INTEGER DEFAULT NULL,
 		created_at INTEGER NOT NULL
 	);`
@@ -156,7 +159,93 @@ func createTables(db *sql.DB) error {
 	if _, err := db.Exec(createClientTable); err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
+
+	createNodeTable := `
+	DROP TABLE IF EXISTS nodes;
+	DROP TABLE IF EXISTS wallets;
+	
+	CREATE TABLE wallets (
+		wallet_address TEXT PRIMARY KEY,
+		last_used INTEGER DEFAULT 0,
+		lock_time INTEGER DEFAULT 0
+	);
+	
+	CREATE TABLE nodes (
+		node_id TEXT PRIMARY KEY,
+		node_type INTEGER NOT NULL,
+		wallet_address TEXT NOT NULL,
+		last_used INTEGER DEFAULT 0,
+		lock_time INTEGER DEFAULT 0,
+		FOREIGN KEY (wallet_address) REFERENCES wallets(wallet_address)
+	);
+	
+	CREATE INDEX idx_wallets_lock ON wallets(lock_time);
+	CREATE INDEX idx_nodes_lock ON nodes(lock_time);
+	CREATE INDEX idx_nodes_wallet ON nodes(wallet_address);
+	`
+	if _, err := db.Exec(createNodeTable); err != nil {
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	// 检查列是否存在
+	if !columnExists(db, "tasks", "add_at") {
+		// 添加列
+		if err := addColumn(db, "tasks", "add_at", "INTEGER DEFAULT 0"); err != nil {
+			log.Fatal("添加列失败:", err)
+		}
+		// fmt.Println("成功添加 add_at 列")
+	}
+	// 检查列是否存在
+	if !columnExists(db, "tasks", "wallet") {
+		// 添加列
+		if err := addColumn(db, "tasks", "wallet", "VARCHAR(50) NOT NULL DEFAULT ''"); err != nil {
+			log.Fatal("添加列失败:", err)
+		}
+		// fmt.Println("成功添加 add_at 列")
+	}
+	// 检查列是否存在
+	if !columnExists(db, "wallets", "signkey") {
+		// 添加列
+		if err := addColumn(db, "wallets", "signkey", "VARCHAR(50) NOT NULL DEFAULT ''"); err != nil {
+			log.Fatal("添加列失败:", err)
+		}
+		// fmt.Println("成功添加 add_at 列")
+	}
 	return nil
+}
+
+// 检查列是否已存在
+func columnExists(db *sql.DB, tableName, columnName string) bool {
+	query := `
+		SELECT 1 
+		FROM pragma_table_info(?)
+		WHERE name = ?
+	`
+
+	var exists int
+	err := db.QueryRow(query, tableName, columnName).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		return false
+	}
+	if err != nil {
+		log.Printf("检查列存在时出错: %v", err)
+		return false
+	}
+	return true
+}
+
+// 添加新列到表中
+func addColumn(db *sql.DB, tableName, columnName, columnType string) error {
+	sqlStatement := fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN %s %s",
+		tableName,
+		columnName,
+		columnType,
+	)
+
+	_, err := db.Exec(sqlStatement)
+	return err
 }
 
 // 优化读写
@@ -236,7 +325,7 @@ func (d *Database) GetTaskStats() (*models.TaskStats, error) {
 // 释放超时锁定的任务
 func releaseExpiredLocks(db *sql.DB) error {
 	c := int64(0)
-	timeout := time.Now().Add(-5 * time.Minute).Unix()
+	timeout := time.Now().Add(-10 * time.Minute).Unix()
 	timeoutCount, err := db.Exec("UPDATE tasks SET status = 'pending', locked_at = NULL WHERE status = 'locked' AND locked_at <= ?", timeout)
 	if err != nil {
 		return fmt.Errorf("failed to release expired locks: %w", err)
@@ -244,6 +333,7 @@ func releaseExpiredLocks(db *sql.DB) error {
 	c1, _ := timeoutCount.RowsAffected()
 	c = c + c1
 	// log.Println("重置超时任务个数：", c1)
+	timeout = time.Now().Add(-2 * time.Minute).Unix()
 
 	rateCount, err := db.Exec("UPDATE tasks SET status = 'pending', locked_at = NULL, result = NULL WHERE result like '%:429}%' AND locked_at <= ?", timeout)
 	if err != nil {
@@ -285,6 +375,14 @@ func releaseExpiredLocks(db *sql.DB) error {
 		return nil
 	}
 
+	timeout = time.Now().Add(-30 * time.Minute).Unix()
+	res, err = db.Exec("DELETE FROM tasks where status != 'success' And created_at < ?", timeout)
+	if err != nil {
+		return fmt.Errorf("failed to DELETE expired : %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return nil
+	}
 	return nil
 }
 
@@ -310,8 +408,8 @@ func (d *Database) CreateTask(task models.TaskData) error {
 
 		stmt, err := db.Prepare(`INSERT INTO tasks(
 			program_id, public_inputs, task_id, sign_key, 
-			status, result, credits, locked_at, created_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			status, result, task_type, locked_at, created_at, add_at, wallet
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 		if err != nil {
 			return fmt.Errorf("prepare statement failed: %w", err)
 		}
@@ -319,7 +417,7 @@ func (d *Database) CreateTask(task models.TaskData) error {
 
 		_, err = stmt.Exec(
 			task.ProgramID, task.PublicInputs, task.TaskID, task.SignKey,
-			models.TaskPending, nil, 0, nil, task.CreatedAt.Unix(),
+			models.TaskPending, nil, task.TaskType, nil, task.CreatedAt.Unix(), task.AddAt.Unix(), task.Wallet,
 		)
 		return err
 	})
@@ -340,11 +438,14 @@ func (d *Database) GetTaskCount(status string) int {
 
 	return count
 }
+func (d *Database) GetDB() *sql.DB {
+	return d.db
+}
 
 // 优化后
 func (d *Database) DeleteTask() error {
 	return d.safeExec(func(db *sql.DB) error {
-		res, err := db.Exec("DELETE FROM tasks where status = 'success'")
+		res, err := db.Exec("DELETE FROM tasks where status = 'completed'")
 		if err != nil {
 			return err
 		}
@@ -447,21 +548,20 @@ func (d *Database) SubmitTaskResult(submission models.TaskResultSubmission) erro
 		return fmt.Errorf("task lock is invalid")
 	}
 
-	lockTime := time.Unix(lockedAt.Int64, 0)
-	if time.Since(lockTime) > 5*time.Minute {
-		return fmt.Errorf("task lock has expired")
-	}
+	// lockTime := time.Unix(lockedAt.Int64, 0)
+	// if time.Since(lockTime) > 10*time.Minute {
+	// 	return fmt.Errorf("task lock has expired")
+	// }
 
 	// 更新任务为完成状态
 	_, err = tx.Exec(`
 		UPDATE tasks 
 		SET status = 'completed', 
 		    result = ?, 
-		    credits = ?, 
 		    locked_at = ?, 
 		    created_at = ?
 		WHERE task_id = ?`,
-		submission.Result, submission.Credits, time.Now().Unix(), lockedAt, submission.TaskID,
+		submission.Result, time.Now().Unix(), lockedAt, submission.TaskID,
 	)
 	if err != nil {
 		return fmt.Errorf("update task result failed: %w", err)
@@ -479,8 +579,9 @@ func scanTask(row *sql.Row) (*models.TaskData, error) {
 	var task models.TaskData
 	var result sql.NullString
 	var lockedAt sql.NullInt64
-	var credits sql.NullInt64
+	var taskType sql.NullInt64
 	var createdAt int64
+	var addAt int64
 
 	err := row.Scan(
 		&task.ProgramID,
@@ -489,9 +590,11 @@ func scanTask(row *sql.Row) (*models.TaskData, error) {
 		&task.SignKey,
 		&task.Status,
 		&result,
-		&credits,
+		&taskType,
 		&lockedAt,
 		&createdAt,
+		&addAt,
+		&task.Wallet,
 	)
 	if err != nil {
 		return nil, err
@@ -499,13 +602,14 @@ func scanTask(row *sql.Row) (*models.TaskData, error) {
 
 	// 处理可能为 NULL 的字段
 	task.Result = sql.NullString{String: result.String, Valid: result.Valid}
-	task.Credits = int(credits.Int64)
+	task.TaskType = int(taskType.Int64)
 
 	if lockedAt.Valid {
 		task.LockedAt = sql.NullTime{Time: time.Unix(lockedAt.Int64, 0), Valid: true}
 	}
 
 	task.CreatedAt = time.Unix(createdAt, 0)
+	task.AddAt = time.Unix(addAt, 0)
 
 	return &task, nil
 }

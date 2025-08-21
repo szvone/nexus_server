@@ -12,9 +12,11 @@ type TaskData struct {
 	SignKey      string         `json:"signKey"`
 	Status       TaskStatus     `json:"status"`
 	Result       sql.NullString `json:"result"` // 支持 NULL 值
-	Credits      int            `json:"credits"`
+	TaskType     int            `json:"taskType"`
 	LockedAt     sql.NullTime   `json:"lockedAt"` // 支持 NULL 值
 	CreatedAt    time.Time      `json:"createdAt"`
+	AddAt        time.Time      `json:"addAt"`
+	Wallet       string         `json:"wallet"`
 }
 
 // 任务状态枚举
@@ -28,9 +30,8 @@ const (
 
 // 任务结果提交请求
 type TaskResultSubmission struct {
-	TaskID  string `json:"taskId" binding:"required"` // 任务ID
-	Result  string `json:"result" binding:"required"` // 任务结果
-	Credits int    `json:"credits"`                   // 积分数量
+	TaskID string `json:"taskId" binding:"required"` // 任务ID
+	Result string `json:"result" binding:"required"` // 任务结果
 }
 
 // 定义API响应结构体

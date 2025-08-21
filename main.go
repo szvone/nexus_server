@@ -82,6 +82,7 @@ func getNodes(address string) bool {
 
 	// 清空当前缓存
 	var nodeList []*gen.Node
+	var signkey = GenKey()
 
 	file, err := os.Open("./" + address + ".txt")
 	if err != nil {
@@ -100,10 +101,10 @@ func getNodes(address string) bool {
 			// c.SetProxyURL("http://127.0.0.1:2025")
 
 			r := c.R()
-			resp, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
+			resp, err := r.Send("GET", "https://production.orchestrator.nexus.xyz/v3/users/"+address)
 			if err != nil {
 				log.Println("读取节点失败，重新尝试...")
-				resp, err = r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/users/"+address)
+				resp, err = r.Send("GET", "https://production.orchestrator.nexus.xyz/v3/users/"+address)
 				if err != nil {
 					log.Println("读取节点失败：", err)
 					return false
@@ -116,18 +117,26 @@ func getNodes(address string) bool {
 				log.Println("读取节点失败：", string(bin))
 				return false
 			}
-			line := ""
+			line := signkey + "\n"
+			nodes.StoreWallet(db.GetDB(), address, signkey)
+
+			isAdd := false
 			for i := 0; i < len(res.Nodes); i++ {
 				line += res.Nodes[i].GetNodeId() + "=" + res.Nodes[i].GetNodeType().String() + "\n"
+				if !isAdd && res.Nodes[i].GetNodeType() == gen.NodeType_CLI_PROVER {
+					isAdd = true
+					nodes.StoreNodes(db.GetDB(), []*gen.Node{res.Nodes[i]}, address)
+				}
 			}
 
-			nodes.StoreNodes(res)
+			// nodes.StoreNodes(db.GetDB(), res.Nodes, address)
+
 			count := len(res.Nodes)
 			if len(res.Nodes) == 50 {
-				resp2, err := r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
+				resp2, err := r.Send("GET", "https://production.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 				if err != nil {
 					log.Println("读取节点失败，重新尝试...")
-					resp2, err = r.Send("GET", "https://beta.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
+					resp2, err = r.Send("GET", "https://production.orchestrator.nexus.xyz/v3/nodes/"+res.UserId+"/"+res.Nodes[len(res.Nodes)-1].NodeId)
 					if err != nil {
 						log.Println("读取节点失败：", err)
 						return false
@@ -140,19 +149,29 @@ func getNodes(address string) bool {
 					log.Println("读取节点失败：", string(bin))
 					return false
 				}
-				nodes.StoreNodes(res2)
+				// nodes.StoreNodes(db.GetDB(), res2.Nodes, res.WalletAddress)
+
 				count += len(res2.Nodes)
 
 				for i := 0; i < len(res2.Nodes); i++ {
 					line += res2.Nodes[i].GetNodeId() + "=" + res2.Nodes[i].GetNodeType().String() + "\n"
+					if !isAdd && res2.Nodes[i].GetNodeType() == gen.NodeType_CLI_PROVER {
+						isAdd = true
+						nodes.StoreNodes(db.GetDB(), []*gen.Node{res2.Nodes[i]}, address)
+					}
 				}
 
 			}
 			log.Println("读取到节点节点数量：", count)
-			if count <= 10 {
-				log.Println("节点节点数量不足10个，请创建节点后再运行！")
+			if count <= 1 {
+				log.Println("节点节点数量不足1个，请创建节点后再运行！")
 				return false
 			}
+			if !isAdd {
+				log.Println("没有找到CLI节点，请创建节点后再运行！")
+				return false
+			}
+
 			// 写出缓存
 			f, err := os.OpenFile("./"+address+".txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 			if err != nil {
@@ -178,11 +197,22 @@ func getNodes(address string) bool {
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
+	keysave := false
+	isAdd := false
+	lines := signkey + "\n"
 	for scanner.Scan() {
 		lineNum++
+
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue // 跳过空行
+		}
+		lines += line + "\n"
+		if lineNum == 1 && len(line) == 128 {
+			signkey = line
+			keysave = true
+			nodes.StoreWallet(db.GetDB(), address, signkey)
+			continue
 		}
 
 		// 解析每行内容
@@ -190,6 +220,13 @@ func getNodes(address string) bool {
 		if err != nil {
 			log.Printf("缓存文件解析错误：解析错误(第%d行): %v - 内容: '%s'\n", lineNum, err, line)
 			continue
+		}
+		if !isAdd && node.NodeType == gen.NodeType_CLI_PROVER {
+			if !keysave {
+				nodes.StoreWallet(db.GetDB(), address, signkey)
+			}
+			nodes.StoreNodes(db.GetDB(), []*gen.Node{node}, address)
+			isAdd = true
 		}
 
 		// 添加到缓存
@@ -200,7 +237,24 @@ func getNodes(address string) bool {
 		log.Println("检查缓存失败，请检查程序权限！", err)
 		return false
 	}
-	nodes.StoreNodesUseList(nodeList)
+	if !isAdd {
+		log.Println("没有找到CLI节点，请创建节点后再运行！")
+		return false
+	}
+
+	// nodes.StoreNodes(db.GetDB(), nodeList, address)
+	if !keysave {
+		f, err := os.OpenFile("./"+address+".txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Println("写出文件失败，请检查程序权限！", err)
+			return false
+		}
+		defer f.Close()
+		if _, err := f.WriteString(lines); err != nil {
+			log.Println("写出文件失败，请检查程序权限！", err)
+			return false
+		}
+	}
 	log.Printf("成功从缓存文件加载 %d 个节点，如果删除了或者更新了节点，请删除缓存文件以获取最新的节点列表。\n", len(nodeList))
 	return true
 }
@@ -224,12 +278,14 @@ func GetProofTaskRequest(node_id string, node_key string, node_type int) []byte 
 			NodeId:           node_id,
 			NodeType:         gen.NodeType_CLI_PROVER,
 			Ed25519PublicKey: pk,
+			MaxDifficulty:    gen.TaskDifficulty_LARGE,
 		}
 	} else {
 		req = gen.GetProofTaskRequest{
 			NodeId:           node_id,
 			NodeType:         gen.NodeType_WEB_PROVER,
 			Ed25519PublicKey: pk,
+			MaxDifficulty:    gen.TaskDifficulty_LARGE,
 		}
 	}
 	binaryData, err := proto.Marshal(&req)
@@ -241,13 +297,16 @@ func GetProofTaskRequest(node_id string, node_key string, node_type int) []byte 
 }
 
 // 创建任务的本地调用函数（不通过HTTP）
-func CreateTask(programID, publicInputs, taskID, signKey string) error {
+func CreateTask(programID, publicInputs, taskID, signKey string, taskType int, wallet string) error {
 	task := models.TaskData{
 		ProgramID:    programID,
 		PublicInputs: publicInputs,
+		TaskType:     taskType,
 		TaskID:       taskID,
 		SignKey:      signKey,
-		CreatedAt:    time.Now().Add(time.Duration(config.Interval2) * time.Second),
+		CreatedAt:    time.Now(),
+		AddAt:        time.Now(),
+		Wallet:       wallet,
 	}
 
 	if err := db.CreateTask(task); err != nil {
@@ -265,16 +324,19 @@ func worker(ctx context.Context, No string) {
 	c := req.C()
 	c.SetRedirectPolicy(req.NoRedirectPolicy())
 	c.SetCookieJar(nil)
-	c.ImpersonateChrome()
-	c.SetTLSFingerprintRandomized()
+	// c.ImpersonateChrome()
+	// c.SetTLSFingerprintRandomized()
 	c.SetCommonHeader("Content-Type", "application/octet-stream")
-	c.SetCommonHeader("Origin", "https://app.nexus.xyz")
-	c.SetCommonHeader("Referer", "https://app.nexus.xyz/")
+	// c.SetCommonHeader("Origin", "https://app.nexus.xyz")
+	// c.SetCommonHeader("Referer", "https://app.nexus.xyz/")
+	c.SetCommonHeader("User-Agent", "nexus-cli/0.10.8")
+	c.SetCommonHeader("X-Build-Timestamp", "1755272024349")
 	c.SetTimeout(time.Duration(120) * time.Second)
 
 	// c.SetProxyURL("http://127.0.0.1:2025")
-
+	var noNode = false
 	for {
+
 		select {
 		case <-ctx.Done():
 			return // 收到停止信号
@@ -286,24 +348,22 @@ func worker(ctx context.Context, No string) {
 				time.Sleep(10 * time.Second)
 				continue
 			}
-			node := nodes.GetNextNode(config.Interval1)
+			node, walletAddress, node_key, _ := nodes.AcquireNode(db.GetDB(), config.Interval1, config.Interval2)
 			if node == nil {
-				log.Println("线程" + No + " 无可用节点，3秒后重试！")
+				if !noNode {
+					noNode = true
+					log.Println("线程" + No + " 无可用节点，持续重试...")
+				}
 				time.Sleep(3 * time.Second)
 				continue
 			}
-			node_key := GenKey()
-			log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务...")
+			noNode = false
+			log.Println("线程" + No + " 节点" + node.NodeId + " 钱包 " + walletAddress + " 获取任务...")
 			r := c.R()
 			r.SetBody(GetProofTaskRequest(node.NodeId, node_key, int(node.NodeType)))
-			resp, err := r.Send("POST", "https://beta.orchestrator.nexus.xyz/v3/tasks")
+			resp, err := r.Send("POST", "https://production.orchestrator.nexus.xyz/v3/tasks")
 			if err != nil {
-
-				if resp.StatusCode == 502 {
-					log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：服务器繁忙！")
-				} else {
-					log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", err)
-				}
+				log.Println("线程"+No+" 节点"+node.NodeId+" 钱包 "+walletAddress+" 获取任务失败：", err)
 				continue
 
 			}
@@ -311,27 +371,35 @@ func worker(ctx context.Context, No string) {
 
 			if strings.Contains(string(bin), "has too many tasks") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
-				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点任务过多，该节点已无法使用，可进行删除，删除后需重启服务端。")
-				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
+				log.Println("线程" + No + " 节点" + node.NodeId + " 钱包 " + walletAddress + " 获取任务失败：节点任务过多，该节点已无法使用，可进行删除，删除后需重启服务端。")
+				nodes.SetNodeLockTime(db.GetDB(), node.NodeId, config.Frequently)
+				nodes.SetWalletLockTime(db.GetDB(), walletAddress, config.Frequently)
 				continue
 			} else if strings.Contains(string(bin), "not found") {
 				// log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
-				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：节点未找到，如果进行了节点删除和添加，需要重启服务端。")
+				log.Println("线程" + No + " 节点" + node.NodeId + " 钱包 " + walletAddress + " 获取任务失败：节点未找到，如果进行了节点删除和添加，需要重启服务端。")
 
 				continue
-			} else if strings.Contains(string(bin), "rate limit exceeded") {
-				log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务失败：429错误，获取任务频繁，尝试增加节点数量、钱包数量，减少任务读取线程，队列长度，调整节点使用间隔、频繁等待间隔。")
-				nodes.UpdateNodeExtractionTime(node.NodeId, config.Frequently)
+			} else if strings.Contains(string(bin), " limit exceeded") {
+				log.Println("线程" + No + " 节点" + node.NodeId + " 钱包 " + walletAddress + " 获取任务失败：429错误。")
+				nodes.SetNodeLockTime(db.GetDB(), node.NodeId, config.Frequently)
+				nodes.SetWalletLockTime(db.GetDB(), walletAddress, config.Frequently)
+				// log.Println(string(bin))
 				continue
 			}
 			task := &gen.GetProofTaskResponse{}
 			err = proto.Unmarshal(bin, task)
 			if err != nil {
-				log.Println("线程"+No+" 节点"+node.NodeId+" 获取任务失败：", string(bin))
+				log.Println("线程" + No + " 节点" + node.NodeId + " 钱包 " + walletAddress + " 获取任务失败：" + string(bin))
 				continue
 			}
-			CreateTask(task.ProgramId, base64.StdEncoding.EncodeToString(task.PublicInputs), task.TaskId, node_key)
-			log.Println("线程" + No + " 节点" + node.NodeId + " 获取任务获取成功，已入库！")
+			var public_inputs_list []string
+
+			for i := 0; i < len(task.Task.PublicInputsList); i++ {
+				public_inputs_list = append(public_inputs_list, base64.StdEncoding.EncodeToString(task.Task.PublicInputsList[i]))
+			}
+			CreateTask(task.Task.ProgramId, strings.Join(public_inputs_list, ","), task.Task.TaskId, node_key, int(task.Task.TaskType), walletAddress)
+			log.Println("线程" + No + " 节点" + node.NodeId + " 任务：" + task.Task.TaskId + "，类型：" + strconv.Itoa(int(task.Task.TaskType)) + "，难度：" + strconv.Itoa(len(task.Task.PublicInputsList)) + "，已入库！")
 
 		}
 	}
@@ -344,9 +412,9 @@ type Config struct {
 	Port       int    `yaml:"port"`
 	Worker     int    `yaml:"worker"`
 	Queue      int    `yaml:"queue"`
-	Interval1  int    `yaml:"interval1"`
+	Interval1  int    `yaml:"interval1"` //节点使用间隔
 	Frequently int    `yaml:"frequently"`
-	Interval2  int    `yaml:"interval2"`
+	Interval2  int    `yaml:"interval2"` //钱包使用间隔
 }
 
 var config Config
@@ -399,6 +467,17 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// 初始化数据库
+	db, err = database.NewDatabase()
+	if err != nil {
+		log.Println("初始化数据库失败！")
+		log.Println("Error:", err)
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Scan()
+		return
+	}
+	defer db.Close()
+
 	if config.Address != "" {
 		log.Println("已加载钱包地址：" + config.Address)
 		// 使用逗号分割字符串
@@ -419,16 +498,6 @@ func main() {
 		}
 	}
 
-	// 初始化数据库
-	db, err = database.NewDatabase()
-	if err != nil {
-		log.Println("初始化数据库失败！")
-		log.Println("Error:", err)
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Scan()
-		return
-	}
-	defer db.Close()
 	if config.Address != "" {
 		// 循环获取节点
 		for i := 1; i <= config.Worker; i++ {

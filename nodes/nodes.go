@@ -1,210 +1,332 @@
 package nodes
 
 import (
+	"database/sql"
+	"errors"
+	"log"
 	"nexus_server/gen"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
 var (
-	globalNodes   sync.Map                 // map[nodeId]*Node
-	nodeList      atomic.Pointer[[]string] // 存储所有节点ID的列表
-	mu            sync.RWMutex
-	currentIdx    uint64     // 原子计数器，用于循环索引
-	nodeLastTaken sync.Map   // 记录节点最后提取时间 map[nodeId]int64 (Unix时间戳)
-	nextNodeLock  sync.Mutex // 新增: 全局互斥锁，确保GetNextNode单线程调用
+	dbMutex       sync.Mutex // 保护所有数据库写操作
+	walletMutexes sync.Map   // 每个钱包的专用互斥锁
+	nodeMutexes   sync.Map   // 每个节点的专用互斥锁
 )
 
-// StoreNodes 安全地更新节点列表（不覆盖现有有效节点）
-func StoreNodes(resp *gen.UserResponse) {
-	if resp == nil {
-		return
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// 创建新的节点ID列表（保留之前的有效节点）
-	newNodeIDs := []string{}
-	if existingList := nodeList.Load(); existingList != nil {
-		// 保留现有的节点ID列表
-		newNodeIDs = *existingList
-	}
-
-	// 处理当前响应中的节点
-	for _, node := range resp.GetNodes() {
-		if node == nil || node.GetNodeId() == "" {
-			continue
-		}
-
-		nodeID := node.GetNodeId()
-
-		// 存储/更新节点
-		nodeCopy := &gen.Node{
-			NodeId:   node.GetNodeId(),
-			NodeType: node.GetNodeType(),
-			// 添加其他必要字段...
-		}
-		globalNodes.Store(nodeID, nodeCopy)
-
-		// 如果节点ID不在列表中则添加
-		found := false
-		for _, id := range newNodeIDs {
-			if id == nodeID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			newNodeIDs = append(newNodeIDs, nodeID)
-		}
-	}
-
-	// 原子方式更新节点ID列表
-	updatedList := make([]string, len(newNodeIDs))
-	copy(updatedList, newNodeIDs)
-	nodeList.Store(&updatedList)
-}
-func StoreNodesUseList(list []*gen.Node) {
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// 创建新的节点ID列表（保留之前的有效节点）
-	newNodeIDs := []string{}
-	if existingList := nodeList.Load(); existingList != nil {
-		// 保留现有的节点ID列表
-		newNodeIDs = *existingList
-	}
-
-	// 处理当前响应中的节点
-	for _, node := range list {
-
-		nodeID := node.GetNodeId()
-
-		// 存储/更新节点
-		nodeCopy := &gen.Node{
-			NodeId:   node.GetNodeId(),
-			NodeType: node.GetNodeType(),
-			// 添加其他必要字段...
-		}
-		globalNodes.Store(nodeID, nodeCopy)
-
-		// 如果节点ID不在列表中则添加
-		found := false
-		for _, id := range newNodeIDs {
-			if id == nodeID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			newNodeIDs = append(newNodeIDs, nodeID)
-		}
-	}
-
-	// 原子方式更新节点ID列表
-	updatedList := make([]string, len(newNodeIDs))
-	copy(updatedList, newNodeIDs)
-	nodeList.Store(&updatedList)
+type Wallet struct {
+	Address  string
+	LastUsed int64
+	LockTime int64
 }
 
-// GetNextNode 获取下一个可用的节点（确保单线程调用）
-// cooldownSeconds: 冷却时间（秒），0表示无冷却时间
-func GetNextNode(cooldownSeconds int) *gen.Node {
-	// 获取全局互斥锁，确保函数单线程执行
-	nextNodeLock.Lock()
-	defer nextNodeLock.Unlock()
-
-	// 尝试多次查找有效节点
-	startTime := time.Now().Unix() // 当前Unix时间戳(秒)
-
-	nodeIDs := nodeList.Load()
-	if nodeIDs == nil || len(*nodeIDs) == 0 {
-		return nil
-	}
-
-	total := uint64(len(*nodeIDs))
-	if total == 0 {
-		return nil
-	}
-
-	// 记录原始起始索引
-	originalIdx := atomic.LoadUint64(&currentIdx)
-	attempts := uint64(0)
-
-	for attempts < total {
-		// 计算当前索引
-		idx := (originalIdx + attempts) % total
-		attempts++
-
-		nodeID := (*nodeIDs)[idx]
-
-		// 检查冷却时间
-		if cooldownSeconds > 0 {
-			if lastTaken, ok := nodeLastTaken.Load(nodeID); ok {
-				if startTime-lastTaken.(int64) < int64(cooldownSeconds) {
-					continue // 仍在冷却期，跳过
-				}
-			}
-		}
-
-		// 获取节点实例
-		value, ok := globalNodes.Load(nodeID)
-		if !ok {
-			continue // 节点不存在
-		}
-
-		node, valid := value.(*gen.Node)
-		if !valid || node == nil {
-			continue // 节点无效
-		}
-
-		// 成功获取: 更新提取时间和当前索引
-		nodeLastTaken.Store(nodeID, startTime)
-		atomic.StoreUint64(&currentIdx, (idx+1)%total) // 更新索引到下一个位置
-		return node
-	}
-
-	// 没有找到可用节点，更新索引到末尾+1
-	atomic.StoreUint64(&currentIdx, (originalIdx+attempts)%total)
-	return nil
+type DBNode struct {
+	NodeID   string
+	NodeType gen.NodeType
+	Wallet   string
+	LastUsed int64
+	LockTime int64
 }
-func UpdateNodeExtractionTime(nodeId string, addSeconds int) {
-	if addSeconds == 0 {
-		return // 不需要改变
-	}
 
+// 获取特定钱包的互斥锁
+func walletLock(walletAddress string) *sync.Mutex {
+	m, _ := walletMutexes.LoadOrStore(walletAddress, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+// 获取特定节点的互斥锁
+func nodeLock(nodeID string) *sync.Mutex {
+	m, _ := nodeMutexes.LoadOrStore(nodeID, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+// AcquireNode 安全地获取一个节点（多线程安全）
+func AcquireNode(db *sql.DB, cooldownSeconds int, cooldownSeconds2 int) (*gen.Node, string, string, error) {
 	now := time.Now().Unix()
-	var newTime int64
 
-	if lastTaken, ok := nodeLastTaken.Load(nodeId); ok {
-		// 如果已有提取时间，则在原有基础上添加
-		newTime = lastTaken.(int64) + int64(addSeconds)
-	} else {
-		// 如果没有记录，则在当前时间基础上添加
-		newTime = now + int64(addSeconds)
+	// 第一阶段：查找可用的钱包
+	var walletAddress string
+	var signkey string
+	if err := func() error {
+		// 全局锁保护钱包查找
+		dbMutex.Lock()
+		defer dbMutex.Unlock()
+
+		row := db.QueryRow(`
+			SELECT wallet_address , signkey
+			FROM wallets 
+			WHERE lock_time <= ?
+			ORDER BY last_used ASC
+			LIMIT 1
+		`, now)
+
+		if err := row.Scan(&walletAddress, &signkey); err != nil {
+			if err == sql.ErrNoRows {
+				return errors.New("no available wallets")
+			}
+			return err
+		}
+		return nil
+	}(); err != nil {
+		return nil, "", "", err
+	}
+	// 第二阶段：查找该钱包下的可用节点
+	var (
+		nodeID   string
+		nodeType gen.NodeType
+	)
+
+	// 获取钱包锁（防止多个线程同时操作同一个钱包）
+	walletLock(walletAddress).Lock()
+	defer walletLock(walletAddress).Unlock()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, "", "", err
 	}
 
-	// 原子更新提取时间
-	nodeLastTaken.Store(nodeId, newTime)
-}
-
-// 从全局变量获取节点
-func GetNode(nodeId string) *gen.Node {
-	if value, ok := globalNodes.Load(nodeId); ok {
-		return value.(*gen.Node)
+	// 再次检查钱包状态
+	var walletLockTime int64
+	if err := tx.QueryRow(`
+		SELECT lock_time FROM wallets WHERE wallet_address = ? 
+	`, walletAddress).Scan(&walletLockTime); err != nil {
+		tx.Rollback()
+		return nil, "", "", err
 	}
-	return nil
+
+	if walletLockTime > now {
+		tx.Rollback()
+		return nil, "", "", errors.New("wallet has been locked by another process")
+	}
+
+	// 查找节点
+	if err := tx.QueryRow(`
+		SELECT node_id, node_type
+		FROM nodes
+		WHERE wallet_address = ? AND lock_time <= ?
+		ORDER BY last_used ASC
+		LIMIT 1
+	`, walletAddress, now).Scan(&nodeID, &nodeType); err != nil {
+		tx.Rollback()
+		return nil, "", "", err
+	}
+
+	// 获取节点锁（防止多个线程同时操作同一个节点）
+	nodeLock(nodeID).Lock()
+	defer nodeLock(nodeID).Unlock()
+
+	newLockTime := now + int64(cooldownSeconds)
+
+	// 更新节点状态
+	if _, err := tx.Exec(`
+		UPDATE nodes 
+		SET last_used = ?, lock_time = ?
+		WHERE node_id = ?
+	`, now, newLockTime, nodeID); err != nil {
+		tx.Rollback()
+		return nil, "", "", err
+	}
+	newLockTime = now + int64(cooldownSeconds2)
+
+	// 更新钱包状态
+	if _, err := tx.Exec(`
+		UPDATE wallets 
+		SET last_used = ?, lock_time = ?
+		WHERE wallet_address = ?
+	`, now, newLockTime, walletAddress); err != nil {
+		tx.Rollback()
+		return nil, "", "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, "", "", err
+	}
+
+	return &gen.Node{
+		NodeId:   nodeID,
+		NodeType: nodeType,
+	}, walletAddress, signkey, nil
 }
 
-// 获取所有节点
-func GetAllNodes() []*gen.Node {
-	var nodes []*gen.Node
-	globalNodes.Range(func(key, value interface{}) bool {
-		nodes = append(nodes, value.(*gen.Node))
-		return true
-	})
-	return nodes
+// SetWalletLockTime 安全设置钱包锁定时间
+func SetWalletLockTime(db *sql.DB, walletAddress string, seconds int) error {
+
+	// 获取钱包锁
+	mutex := walletLock(walletAddress)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	lockTime := time.Now().Unix() + int64(seconds)
+
+	// 使用事务确保原子性
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE wallets 
+		SET lock_time = ?
+		WHERE wallet_address = ?
+	`, lockTime, walletAddress); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// SetNodeLockTime 安全设置节点锁定时间
+func SetNodeLockTime(db *sql.DB, nodeID string, seconds int) error {
+
+	// 获取节点锁
+	mutex := nodeLock(nodeID)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	lockTime := time.Now().Unix() + int64(seconds)
+
+	// 使用事务确保原子性
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(`
+		UPDATE nodes 
+		SET lock_time = ?
+		WHERE node_id = ?
+	`, lockTime, nodeID); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// StoreNodes 安全存储节点列表
+func StoreNodes(db *sql.DB, nodes []*gen.Node, walletAddress string) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	// 获取钱包锁（确保整个操作原子性）
+	mutex := walletLock(walletAddress)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	// 开始事务
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	// 确保钱包存在
+	if _, err := tx.Exec(`
+		INSERT OR IGNORE INTO wallets (wallet_address) 
+		VALUES (?)
+	`, walletAddress); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// 插入/更新节点
+	for _, node := range nodes {
+		if _, err := tx.Exec(`
+			INSERT OR REPLACE INTO nodes 
+			(node_id, node_type, wallet_address) 
+			VALUES (?, ?, ?)
+		`, node.GetNodeId(), int(node.GetNodeType()), walletAddress); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// StoreWallet 安全存储钱包地址
+func StoreWallet(db *sql.DB, walletAddress string, signkey string) error {
+
+	// 获取钱包锁
+	mutex := walletLock(walletAddress)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	tx, err := db.Begin()
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO wallets (wallet_address, signkey)
+		VALUES (?, ?)
+		ON CONFLICT(wallet_address) DO UPDATE 
+		SET signkey = excluded.signkey
+	`, walletAddress, signkey); err != nil {
+		tx.Rollback()
+		log.Println(err)
+
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// GetNode 安全获取节点信息
+func GetNode(db *sql.DB, nodeID string) (*gen.Node, error) {
+
+	node := &gen.Node{}
+	var nodeType int
+
+	// 只读操作不需要全局锁，但需要节点级锁避免写入冲突
+	mutex := nodeLock(nodeID)
+	mutex.Lock()
+	defer mutex.Unlock()
+
+	if err := db.QueryRow(`
+		SELECT node_id, node_type 
+		FROM nodes 
+		WHERE node_id = ?
+	`, nodeID).Scan(&node.NodeId, &nodeType); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	node.NodeType = gen.NodeType(nodeType)
+	return node, nil
+}
+
+// GetAllNodes 安全获取所有节点
+func GetAllNodes(db *sql.DB) ([]*gen.Node, error) {
+
+	// 只读操作使用全局锁确保一致性
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+
+	rows, err := db.Query(`
+		SELECT node_id, node_type
+		FROM nodes
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	nodes := []*gen.Node{}
+	for rows.Next() {
+		var nodeID string
+		var nodeType int
+		if err := rows.Scan(&nodeID, &nodeType); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, &gen.Node{
+			NodeId:   nodeID,
+			NodeType: gen.NodeType(nodeType),
+		})
+	}
+	return nodes, nil
 }
