@@ -1,8 +1,8 @@
 host: 127.0.0.1
-address: 0x87349109565b1607751b5F0AdEa3c98127388a68
+address: 0x4917a3442E37844423075021fF02e6b4Ea111e6f
 port: 8182
 worker: 1
 queue: 10
 interval1: 1
 frequently: 5
-interval2: 120
+interval2: 100
